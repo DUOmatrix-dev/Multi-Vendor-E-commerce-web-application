@@ -22,6 +22,7 @@ export interface Vendor {
   status: 'active' | 'pending' | 'suspended';
   balance: number;
   total_earnings: number;
+  low_stock_threshold?: number;
   created_at: string;
   owner_name?: string;
   owner_email?: string;
@@ -131,6 +132,8 @@ export interface OrderItem {
   license_key: string;
 }
 
+export type OrderTag = 'Priority' | 'Backorder' | 'Gift';
+
 export interface Order {
   id: number;
   order_number: string;
@@ -158,6 +161,7 @@ export interface Order {
   points_redeemed?: number;
   loyalty_discount?: number;
   order_notes?: string;
+  tags?: OrderTag[];
   updated_at?: string;
   created_at: string;
   items?: OrderItem[];

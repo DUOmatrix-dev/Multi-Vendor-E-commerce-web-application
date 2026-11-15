@@ -34,6 +34,7 @@ export function initDatabase() {
       status TEXT NOT NULL DEFAULT 'active',
       balance REAL NOT NULL DEFAULT 0,
       total_earnings REAL NOT NULL DEFAULT 0,
+      low_stock_threshold INTEGER NOT NULL DEFAULT 20,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -101,6 +102,7 @@ export function initDatabase() {
       points_redeemed INTEGER NOT NULL DEFAULT 0,
       loyalty_discount REAL NOT NULL DEFAULT 0,
       order_notes TEXT DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
@@ -299,9 +301,20 @@ export function initDatabase() {
   if (!colNames.has('order_notes')) {
     db.exec(`ALTER TABLE orders ADD COLUMN order_notes TEXT DEFAULT ''`);
   }
+  if (!colNames.has('tags')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`);
+    db.prepare(`UPDATE orders SET tags = ? WHERE order_number = 'OM-10042'`).run(JSON.stringify(['Priority']));
+    db.prepare(`UPDATE orders SET tags = ? WHERE order_number = 'OM-10044'`).run(JSON.stringify(['Gift']));
+  }
   if (!colNames.has('updated_at')) {
     db.exec(`ALTER TABLE orders ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
     db.exec(`UPDATE orders SET updated_at = created_at WHERE updated_at = ''`);
+  }
+
+  const vendorCols = db.prepare(`PRAGMA table_info(vendors)`).all() as Array<{ name: string }>;
+  const vendorColNames = new Set(vendorCols.map((c) => c.name));
+  if (!vendorColNames.has('low_stock_threshold')) {
+    db.exec(`ALTER TABLE vendors ADD COLUMN low_stock_threshold INTEGER NOT NULL DEFAULT 20`);
   }
 
   const orderItemCols = db.prepare(`PRAGMA table_info(order_items)`).all() as Array<{ name: string }>;
@@ -746,6 +759,7 @@ function seedInitialData() {
     295.00, 0, 23.60, 0, 318.60, '', 'storefront', '2026-11-12 09:45:00'
   ).lastInsertRowid;
   insertOrderItem.run(o2, p3, vendor2Id, 'Aegis Heritage Leather Commuter Pack', 'OM-BAG-003', '18L Standard', 1, 295.00, 295.00, 259.60, 35.40, '');
+  db.prepare('UPDATE orders SET tags = ? WHERE id = ?').run(JSON.stringify(['Priority']), o2);
 
   const o3 = insertOrder.run(
     'OM-10043', null, 'Julian Vance', 'julian.v@studio.io', '+1 206 555 0181',
@@ -762,6 +776,7 @@ function seedInitialData() {
   ).lastInsertRowid;
   insertOrderItem.run(o4, p4, vendor2Id, 'Aura Precision Home Espresso Machine', 'OM-HOM-004', '110V North America', 1, 890.00, 890.00, 783.20, 106.80, '');
   insertOrderItem.run(o4, p6, vendor2Id, 'Nordic Dome Ceramic Table Lamp', 'OM-LMP-006', '', 1, 185.00, 185.00, 162.80, 22.20, '');
+  db.prepare('UPDATE orders SET tags = ? WHERE id = ?').run(JSON.stringify(['Gift']), o4);
 
   const o5 = insertOrder.run(
     'OM-10045', null, 'Walk-in POS Guest', 'pos@omnimart.com', '',

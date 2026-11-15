@@ -21,6 +21,9 @@ import {
   Check,
   Sun,
   Moon,
+  Flag,
+  Clock,
+  Gift,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -39,6 +42,7 @@ import {
   HomepageSection,
   MenuItem,
   Order,
+  OrderTag,
   Payout,
   Product,
   Vendor,
@@ -70,6 +74,35 @@ type AdminTab =
   | 'settings';
 
 const ADMIN_THEME_STORAGE_KEY = 'omnimart_admin_theme';
+
+const ORDER_TAGS: OrderTag[] = ['Priority', 'Backorder', 'Gift'];
+
+const ORDER_TAG_STYLE: Record<
+  OrderTag,
+  { icon: React.ReactNode; active: string; inactive: string }
+> = {
+  Priority: {
+    icon: <Flag className="w-3 h-3 shrink-0" />,
+    active:
+      'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800',
+    inactive:
+      'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700 dark:bg-slate-800/70 dark:text-slate-400 dark:border-slate-700 dark:hover:text-slate-200',
+  },
+  Backorder: {
+    icon: <Clock className="w-3 h-3 shrink-0" />,
+    active:
+      'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+    inactive:
+      'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700 dark:bg-slate-800/70 dark:text-slate-400 dark:border-slate-700 dark:hover:text-slate-200',
+  },
+  Gift: {
+    icon: <Gift className="w-3 h-3 shrink-0" />,
+    active:
+      'bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800',
+    inactive:
+      'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700 dark:bg-slate-800/70 dark:text-slate-400 dark:border-slate-700 dark:hover:text-slate-200',
+  },
+};
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   currency,
@@ -117,6 +150,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   );
   const [orderViewMode, setOrderViewMode] = useState<'kanban' | 'table'>('kanban');
   const [orderSearch, setOrderSearch] = useState('');
+  const [orderTagFilter, setOrderTagFilter] = useState<'all' | OrderTag | 'untagged'>('all');
 
   // Quick Add Forms
   const [catName, setCatName] = useState('');
@@ -202,14 +236,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const filteredOrders = useMemo(() => {
     const q = orderSearch.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter(
-      (o) =>
+    return orders.filter((o) => {
+      const tags = o.tags || [];
+      if (orderTagFilter === 'untagged' && tags.length > 0) return false;
+      if (
+        orderTagFilter !== 'all' &&
+        orderTagFilter !== 'untagged' &&
+        !tags.includes(orderTagFilter)
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      return (
         o.order_number.toLowerCase().includes(q) ||
         o.customer_name.toLowerCase().includes(q) ||
-        o.customer_email.toLowerCase().includes(q)
-    );
-  }, [orders, orderSearch]);
+        o.customer_email.toLowerCase().includes(q) ||
+        tags.some((t) => t.toLowerCase().includes(q))
+      );
+    });
+  }, [orders, orderSearch, orderTagFilter]);
 
   const handleSaveProduct = async (payload: Record<string, unknown>, existingId?: number) => {
     if (existingId) {
@@ -291,6 +336,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
     await loadAdminAll();
     onDataMutated();
+  };
+
+  const handleOrderTags = async (orderId: number, tags: OrderTag[]) => {
+    const prevOrders = orders;
+    setOrders((curr) => curr.map((o) => (o.id === orderId ? { ...o, tags } : o)));
+    try {
+      const res = await apiRequest<{ order: Order }>(`/api/admin/orders/${orderId}/tags`, {
+        method: 'PATCH',
+        body: JSON.stringify({ tags }),
+      });
+      if (res.order) {
+        setOrders((curr) => curr.map((o) => (o.id === orderId ? { ...o, tags: res.order.tags || [] } : o)));
+      }
+      onDataMutated();
+    } catch (err) {
+      setOrders(prevOrders);
+      setError(err instanceof Error ? err.message : 'Unable to update order tags');
+    }
   };
 
   const handleVendorUpdate = async (id: number, updates: { status?: string; commission_rate?: number }) => {
@@ -841,11 +904,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   </div>
 
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        { id: 'all', label: 'All Orders', count: orders.length },
+                        ...ORDER_TAGS.map((tag) => ({
+                          id: tag,
+                          label: tag,
+                          count: orders.filter((o) => (o.tags || []).includes(tag)).length,
+                        })),
+                        {
+                          id: 'untagged',
+                          label: 'Untagged',
+                          count: orders.filter((o) => (o.tags || []).length === 0).length,
+                        },
+                      ] as const
+                    ).map((f) => {
+                      const active = orderTagFilter === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setOrderTagFilter(f.id)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                            active
+                              ? 'bg-slate-900 text-white border-slate-900 dark:bg-blue-600 dark:border-blue-600'
+                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                          }`}
+                        >
+                          <span>{f.label}</span>
+                          <span
+                            className={`font-mono tabular-nums text-[11px] ${
+                              active ? 'text-slate-200' : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
+                            {f.count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {orderViewMode === 'kanban' ? (
                     <OrderKanbanBoard
                       orders={filteredOrders}
                       currency={currency}
                       onStatusChange={handleOrderStatus}
+                      onTagsChange={handleOrderTags}
                     />
                   ) : (
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-x-auto">
@@ -854,6 +959,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <tr>
                             <th className="py-3 px-4 font-medium">Order #</th>
                             <th className="py-3 px-4 font-medium">Customer</th>
+                            <th className="py-3 px-4 font-medium">Order Tags</th>
                             <th className="py-3 px-4 font-medium">Source</th>
                             <th className="py-3 px-4 font-medium">Payment</th>
                             <th className="py-3 px-4 font-medium">Fulfillment</th>
@@ -861,35 +967,75 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                          {filteredOrders.map((o) => (
-                            <tr key={o.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                              <td className="py-3 px-4 font-mono font-semibold text-slate-900 dark:text-slate-100">{o.order_number}</td>
-                              <td className="py-3 px-4">
-                                <div className="font-medium text-slate-900 dark:text-slate-100">{o.customer_name}</div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400">{o.customer_email}</div>
-                              </td>
-                              <td className="py-3 px-4 uppercase text-xs text-slate-500 dark:text-slate-400">{o.source}</td>
-                              <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300 uppercase">
-                                {o.payment_method} · {o.payment_status}
-                              </td>
-                              <td className="py-3 px-4">
-                                <select
-                                  value={o.order_status}
-                                  onChange={(e) => handleOrderStatus(o.id, e.target.value as Order['order_status'])}
-                                  className="px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
-                                >
-                                  <option value="pending">Pending</option>
-                                  <option value="processing">Processing</option>
-                                  <option value="shipped">Shipped</option>
-                                  <option value="delivered">Delivered</option>
-                                  <option value="cancelled">Cancelled</option>
-                                </select>
-                              </td>
-                              <td className="py-3 px-4 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                                {formatMoney(o.total, currency)}
+                          {filteredOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                                No orders match the current search or tag filter.
                               </td>
                             </tr>
-                          ))}
+                          ) : (
+                            filteredOrders.map((o) => {
+                              const activeTags = o.tags || [];
+                              return (
+                                <tr key={o.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                  <td className="py-3 px-4 font-mono font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                                    {o.order_number}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div className="font-medium text-slate-900 dark:text-slate-100">{o.customer_name}</div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">{o.customer_email}</div>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {ORDER_TAGS.map((tag) => {
+                                        const isActive = activeTags.includes(tag);
+                                        const style = ORDER_TAG_STYLE[tag];
+                                        return (
+                                          <button
+                                            key={tag}
+                                            type="button"
+                                            aria-pressed={isActive}
+                                            onClick={() => {
+                                              const nextTags = isActive
+                                                ? activeTags.filter((t) => t !== tag)
+                                                : [...activeTags, tag];
+                                              handleOrderTags(o.id, nextTags);
+                                            }}
+                                            className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium border rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                                              isActive ? style.active : style.inactive
+                                            }`}
+                                          >
+                                            {style.icon}
+                                            {tag}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4 uppercase text-xs text-slate-500 dark:text-slate-400">{o.source}</td>
+                                  <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300 uppercase whitespace-nowrap">
+                                    {o.payment_method} · {o.payment_status}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <select
+                                      value={o.order_status}
+                                      onChange={(e) => handleOrderStatus(o.id, e.target.value as Order['order_status'])}
+                                      className="px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+                                    >
+                                      <option value="pending">Pending</option>
+                                      <option value="processing">Processing</option>
+                                      <option value="shipped">Shipped</option>
+                                      <option value="delivered">Delivered</option>
+                                      <option value="cancelled">Cancelled</option>
+                                    </select>
+                                  </td>
+                                  <td className="py-3 px-4 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                                    {formatMoney(o.total, currency)}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>

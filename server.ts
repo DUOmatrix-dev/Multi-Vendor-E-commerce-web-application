@@ -1485,6 +1485,33 @@ app.post('/api/notifications/read-all', requireAuth(), (req: AuthedRequest, res:
 // ==========================================
 // VENDOR DASHBOARD ROUTES
 // ==========================================
+const ALLOWED_ORDER_TAGS = ['Priority', 'Backorder', 'Gift'] as const;
+
+function parseOrderTags(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return Array.from(
+      new Set(raw.filter((t): t is string => typeof t === 'string' && (ALLOWED_ORDER_TAGS as readonly string[]).includes(t)))
+    );
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return Array.from(
+          new Set(
+            parsed.filter(
+              (t): t is string => typeof t === 'string' && (ALLOWED_ORDER_TAGS as readonly string[]).includes(t)
+            )
+          )
+        );
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function getVendorForUser(userId: number) {
   return db.prepare('SELECT * FROM vendors WHERE user_id = ?').get(userId) as {
     id: number;
@@ -1496,7 +1523,18 @@ function getVendorForUser(userId: number) {
     status: string;
     balance: number;
     total_earnings: number;
+    low_stock_threshold: number;
   } | undefined;
+}
+
+function getVendorLowStockProducts(vendorId: number, threshold: number) {
+  return db.prepare(`
+    SELECT p.*, c.name as category_name
+    FROM products p
+    JOIN categories c ON p.category_id = c.id
+    WHERE p.vendor_id = ? AND p.product_type = 'physical' AND p.stock < ?
+    ORDER BY p.stock ASC, p.id ASC
+  `).all(vendorId, threshold);
 }
 
 app.get('/api/vendor/dashboard', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
@@ -1527,6 +1565,7 @@ app.get('/api/vendor/dashboard', requireAuth(['vendor', 'admin']), (req: AuthedR
 
   const enrichedOrders = orders.map((o) => ({
     ...o,
+    tags: parseOrderTags(o.tags),
     items: db.prepare('SELECT * FROM order_items WHERE order_id = ? AND vendor_id = ?').all(o.id, vendor!.id),
   }));
 
@@ -1568,6 +1607,8 @@ app.get('/api/vendor/dashboard', requireAuth(['vendor', 'admin']), (req: AuthedR
   ).all(vendor.id);
 
   const categories = db.prepare('SELECT * FROM categories WHERE is_active = 1 ORDER BY sort_order ASC').all();
+  const threshold = Math.max(1, Number(vendor.low_stock_threshold ?? 20));
+  const lowStockProducts = getVendorLowStockProducts(vendor.id, threshold);
 
   res.json({
     vendor,
@@ -1577,7 +1618,29 @@ app.get('/api/vendor/dashboard', requireAuth(['vendor', 'admin']), (req: AuthedR
     categories,
     dailySales: dailySalesRaw,
     topProducts,
+    lowStockProducts,
   });
+});
+
+app.patch('/api/vendor/inventory-threshold', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
+  let vendor = getVendorForUser(req.user!.id);
+  if (!vendor && req.user!.role === 'admin') {
+    vendor = db.prepare('SELECT * FROM vendors ORDER BY id ASC LIMIT 1').get() as typeof vendor;
+  }
+  if (!vendor) {
+    res.status(404).json({ error: 'Vendor profile not found' });
+    return;
+  }
+  const raw = Number((req.body as { threshold?: number })?.threshold);
+  if (!Number.isFinite(raw) || raw < 1 || raw > 1000) {
+    res.status(400).json({ error: 'Threshold must be an integer between 1 and 1000' });
+    return;
+  }
+  const threshold = Math.round(raw);
+  db.prepare('UPDATE vendors SET low_stock_threshold = ? WHERE id = ?').run(threshold, vendor.id);
+  const updatedVendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(vendor.id);
+  const lowStockProducts = getVendorLowStockProducts(vendor.id, threshold);
+  res.json({ threshold, vendor: updatedVendor, lowStockProducts });
 });
 
 app.put('/api/vendor/profile', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
@@ -2037,6 +2100,7 @@ app.get('/api/admin/orders', requireAuth(['admin']), (_req: Request, res: Respon
   const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC, id DESC').all() as Array<Record<string, unknown>>;
   const enriched = orders.map((o) => ({
     ...o,
+    tags: parseOrderTags(o.tags),
     items: db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id),
   }));
   res.json({ orders: enriched });
@@ -2058,14 +2122,48 @@ app.patch('/api/admin/orders/:id/status', requireAuth(['admin']), (req: Request,
     WHERE id = ?
   `).run(order_status || null, payment_status || null, expected_delivery_date || null, id);
   emitOrderTrackingUpdate(id);
-  res.json({ order: db.prepare('SELECT * FROM orders WHERE id = ?').get(id) });
+  const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  res.json({ order: updated ? { ...updated, tags: parseOrderTags(updated.tags) } : null });
+});
+
+app.patch('/api/admin/orders/:id/tags', requireAuth(['admin']), (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Order not found' });
+    return;
+  }
+  const { tags } = req.body as { tags?: unknown };
+  if (!Array.isArray(tags)) {
+    res.status(400).json({ error: 'tags must be an array of order tags' });
+    return;
+  }
+  const validTags = parseOrderTags(tags);
+  db.prepare(`UPDATE orders SET tags = ?, updated_at = datetime('now') WHERE id = ?`).run(
+    JSON.stringify(validTags),
+    id
+  );
+  const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Record<string, unknown>;
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id);
+  res.json({ order: { ...updated, tags: validTags, items } });
 });
 
 app.get('/api/admin/orders/export/csv', requireAuth(['admin']), (_req: Request, res: Response) => {
   const rows = db.prepare('SELECT * FROM orders ORDER BY id DESC').all() as Array<Record<string, unknown>>;
-  const header = 'order_number,customer_name,customer_email,payment_method,payment_status,order_status,total,source,created_at';
+  const header = 'order_number,customer_name,customer_email,payment_method,payment_status,order_status,tags,total,source,created_at';
   const lines = rows.map((r) =>
-    [r.order_number, r.customer_name, r.customer_email, r.payment_method, r.payment_status, r.order_status, r.total, r.source, r.created_at]
+    [
+      r.order_number,
+      r.customer_name,
+      r.customer_email,
+      r.payment_method,
+      r.payment_status,
+      r.order_status,
+      parseOrderTags(r.tags).join('; '),
+      r.total,
+      r.source,
+      r.created_at,
+    ]
       .map((val) => `"${String(val ?? '').replace(/"/g, '""')}"`)
       .join(',')
   );
