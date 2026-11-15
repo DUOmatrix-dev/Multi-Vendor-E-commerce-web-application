@@ -9,6 +9,7 @@ export interface User {
   address?: string;
   city?: string;
   postal_code?: string;
+  loyalty_points?: number;
 }
 
 export interface Vendor {
@@ -77,10 +78,47 @@ export interface Product {
   created_at: string;
 }
 
+export interface BundleComponentItem {
+  id: number;
+  bundle_id: number;
+  product_id: number;
+  quantity: number;
+  title: string;
+  slug: string;
+  sku: string;
+  price: number;
+  stock: number;
+  product_type: 'physical' | 'digital' | 'license' | 'affiliate';
+  image_url: string;
+  short_description: string;
+  category_name: string;
+  status: string;
+}
+
+export interface ProductBundle {
+  id: number;
+  vendor_id: number;
+  vendor_name: string;
+  vendor_slug: string;
+  title: string;
+  slug: string;
+  description: string;
+  discount_percent: number;
+  image_url: string;
+  is_active: number;
+  created_at: string;
+  items: BundleComponentItem[];
+  regular_total: number;
+  bundle_price: number;
+  savings: number;
+  available_stock: number;
+}
+
 export interface OrderItem {
   id: number;
   order_id: number;
   product_id: number;
+  bundle_id?: number | null;
   vendor_id: number;
   title: string;
   sku: string;
@@ -113,6 +151,13 @@ export interface Order {
   total: number;
   coupon_code: string;
   source: 'storefront' | 'pos';
+  expected_delivery_date?: string;
+  shipping_carrier?: string;
+  tracking_code?: string;
+  points_earned?: number;
+  points_redeemed?: number;
+  loyalty_discount?: number;
+  updated_at?: string;
   created_at: string;
   items?: OrderItem[];
 }
@@ -166,9 +211,11 @@ export interface CmsPage {
 export interface Review {
   id: number;
   product_id: number;
+  user_id?: number | null;
   author_name: string;
   rating: number;
   comment: string;
+  verified_purchase?: number | boolean;
   created_at: string;
 }
 
@@ -185,10 +232,22 @@ export interface Payout {
 
 export interface CartItem {
   key: string;
-  product: Product;
+  product?: Product;
+  bundle?: ProductBundle;
   variantLabel: string;
   unitPrice: number;
   quantity: number;
+}
+
+export interface LoyaltyTransaction {
+  id: number;
+  user_id: number;
+  order_id: number | null;
+  order_number?: string;
+  points_delta: number;
+  type: 'earn' | 'redeem' | 'bonus';
+  description: string;
+  created_at: string;
 }
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP';

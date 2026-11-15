@@ -51,17 +51,19 @@ export const OrderKanbanBoard: React.FC<OrderKanbanBoardProps> = ({
               handleDrop(col.key);
             }}
             className={`rounded-xl border p-3 min-h-[340px] transition-colors ${
-              isHover ? 'border-blue-600 bg-blue-50/40' : 'border-slate-200 bg-slate-50/70'
+              isHover
+                ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/30'
+                : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60'
             }`}
           >
-            <div className="flex items-center justify-between px-1 pb-3 mb-3 border-b border-slate-200">
-              <span className="text-sm font-semibold text-slate-900">{col.label}</span>
-              <span className="text-xs font-mono text-slate-500 tabular-nums">{colOrders.length}</span>
+            <div className="flex items-center justify-between px-1 pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
+              <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{col.label}</span>
+              <span className="text-xs font-mono text-slate-500 dark:text-slate-400 tabular-nums">{colOrders.length}</span>
             </div>
 
             <div className="space-y-2.5">
               {colOrders.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
+                <div className="py-8 text-center text-xs text-slate-400 dark:text-slate-500">
                   Drag an order here
                 </div>
               ) : (
@@ -70,22 +72,22 @@ export const OrderKanbanBoard: React.FC<OrderKanbanBoardProps> = ({
                     key={order.id}
                     draggable
                     onDragStart={() => setDragOrderId(order.id)}
-                    className={`bg-white border border-slate-200 rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-slate-300 transition-colors ${
+                    className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-slate-300 dark:hover:border-slate-700 transition-colors ${
                       dragOrderId === order.id ? 'opacity-50' : ''
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="text-xs font-mono font-semibold text-slate-900">
+                      <span className="text-xs font-mono font-semibold text-slate-900 dark:text-slate-100">
                         {order.order_number}
                       </span>
                       <GripVertical className="w-3.5 h-3.5 text-slate-400" />
                     </div>
-                    <div className="text-sm font-medium text-slate-800 truncate">
+                    <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
                       {order.customer_name}
                     </div>
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
                       <span className="uppercase">{order.payment_method}</span>
-                      <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                      <span className="font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                         {formatMoney(order.total, currency)}
                       </span>
                     </div>

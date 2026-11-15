@@ -226,15 +226,15 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
           handleDropOnItem(item.clientId, dropMode);
         }}
         className={`flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
-          isChild ? 'ml-8 bg-slate-50' : 'bg-white'
-        } ${isOver ? 'border-blue-600 bg-blue-50/40' : 'border-slate-200'} ${
+          isChild ? 'ml-8 bg-slate-50 dark:bg-slate-800/60' : 'bg-white dark:bg-slate-900'
+        } ${isOver ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/30' : 'border-slate-200 dark:border-slate-800'} ${
           draggedId === item.clientId ? 'opacity-50' : ''
         }`}
       >
         <div className="flex items-center gap-3 flex-1 min-w-[220px]">
           <button
             type="button"
-            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-700 p-1"
+            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 p-1"
             title="Drag to reorder"
           >
             <GripVertical className="w-4 h-4" />
@@ -244,7 +244,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
             type="text"
             value={item.label}
             onChange={(e) => updateItemField(item.clientId, 'label', e.target.value)}
-            className="text-sm font-medium text-slate-900 bg-transparent border-b border-transparent focus:border-blue-600 focus:outline-none px-1 py-0.5 min-w-[120px]"
+            className="text-sm font-medium text-slate-900 dark:text-slate-100 bg-transparent border-b border-transparent focus:border-blue-600 focus:outline-none px-1 py-0.5 min-w-[120px]"
           />
           <span className="text-xs font-mono text-slate-400 truncate max-w-[160px]">
             {item.target_view}
@@ -255,7 +255,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
           <button
             type="button"
             onClick={() => moveItem(item.clientId, -1)}
-            className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded"
+            className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
             title="Move up"
           >
             <ArrowUp className="w-3.5 h-3.5" />
@@ -263,7 +263,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
           <button
             type="button"
             onClick={() => moveItem(item.clientId, 1)}
-            className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded"
+            className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
             title="Move down"
           >
             <ArrowDown className="w-3.5 h-3.5" />
@@ -271,7 +271,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
           <button
             type="button"
             onClick={() => toggleNest(item.clientId)}
-            className="px-2 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded whitespace-nowrap"
+            className="px-2 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded whitespace-nowrap"
             title={isChild ? 'Promote to top-level' : 'Nest as submenu'}
           >
             {isChild ? 'Outdent' : 'Nest'}
@@ -280,7 +280,9 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
             type="button"
             onClick={() => updateItemField(item.clientId, 'is_visible', item.is_visible ? 0 : 1)}
             className={`p-1.5 rounded ${
-              item.is_visible ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300 hover:bg-slate-100'
+              item.is_visible
+                ? 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                : 'text-slate-300 dark:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
             title={item.is_visible ? 'Visible in header' : 'Hidden from header'}
           >
@@ -289,7 +291,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
           <button
             type="button"
             onClick={() => deleteItem(item.clientId)}
-            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+            className="p-1.5 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded"
             title="Delete menu item"
           >
             <Trash2 className="w-4 h-4" />
@@ -301,20 +303,22 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Drag & Drop Menu Builder</h2>
-          <p className="text-sm text-slate-500">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Drag & Drop Menu Builder</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             Drag items to reorder storefront navigation or nest dropdown sub-menus. Changes publish directly to the live header.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg text-xs">
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
             <button
               type="button"
               onClick={() => setDropMode('reorder')}
               className={`px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-                dropMode === 'reorder' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                dropMode === 'reorder'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400'
               }`}
             >
               Drop to Reorder
@@ -323,7 +327,9 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
               type="button"
               onClick={() => setDropMode('nest')}
               className={`px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
-                dropMode === 'nest' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                dropMode === 'nest'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400'
               }`}
             >
               Drop to Nest Submenu
@@ -342,7 +348,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
       </div>
 
       {errorMsg && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+        <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-sm rounded-lg">
           {errorMsg}
         </div>
       )}
@@ -350,24 +356,24 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Add Links & Quick Sources */}
         <div className="lg:col-span-4 space-y-5">
-          <form onSubmit={addCustomItem} className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-slate-900">Add Custom Menu Link</h3>
+          <form onSubmit={addCustomItem} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Add Custom Menu Link</h3>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Navigation Label</label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Navigation Label</label>
               <input
                 type="text"
                 value={newLabel}
                 onChange={(e) => setNewLabel(e.target.value)}
                 placeholder="e.g. New Arrivals"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
+                className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:border-blue-600"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Destination View / Route</label>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Destination View / Route</label>
               <select
                 value={newTarget}
                 onChange={(e) => setNewTarget(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600 bg-white"
+                className="w-full px-3 py-2 text-sm border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:border-blue-600 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
               >
                 <option value="catalog">All Products Catalog</option>
                 <option value="track">Order Tracking Page</option>
@@ -385,22 +391,22 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
             </div>
             <button
               type="submit"
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors"
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-blue-600 dark:hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
             >
               <Plus className="w-4 h-4" />
               Add to Menu Tree
             </button>
           </form>
 
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900">Quick-Add Categories</h3>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Quick-Add Categories</h3>
             <div className="space-y-1.5">
               {categories.map((cat) => (
                 <button
                   key={cat.id}
                   type="button"
                   onClick={() => quickAddLink(cat.name, `category:${cat.slug}`)}
-                  className="w-full flex items-center justify-between px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg transition-colors"
                 >
                   <span>{cat.name}</span>
                   <Plus className="w-3.5 h-3.5 text-slate-400" />
@@ -411,16 +417,16 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
         </div>
 
         {/* Right: Interactive Drag & Drop Tree */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="lg:col-span-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900">Active Storefront Navigation Structure</h3>
-            <span className="text-xs text-slate-500 tabular-nums">{items.length} links configured</span>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Active Storefront Navigation Structure</h3>
+            <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">{items.length} links configured</span>
           </div>
 
           {/* Live Header Preview Strip */}
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-            <div className="text-xs text-slate-500 mb-2">Live Header Preview</div>
-            <div className="flex flex-wrap items-center gap-5 text-sm font-medium text-slate-800">
+          <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg">
+            <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Live Header Preview</div>
+            <div className="flex flex-wrap items-center gap-5 text-sm font-medium text-slate-800 dark:text-slate-200">
               {topLevel
                 .filter((i) => i.is_visible)
                 .map((top) => {
@@ -441,7 +447,7 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
 
           <div className="space-y-2">
             {topLevel.length === 0 ? (
-              <div className="text-center py-10 text-sm text-slate-500 border border-dashed border-slate-200 rounded-lg">
+              <div className="text-center py-10 text-sm text-slate-500 dark:text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-lg">
                 No menu items yet. Add a link from the left panel.
               </div>
             ) : (

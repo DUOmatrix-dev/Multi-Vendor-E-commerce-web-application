@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Heart, X } from 'lucide-react';
 import {
   AppWorkspace,
   CartItem,
@@ -9,6 +9,7 @@ import {
   HomepageSection,
   MenuItem,
   Product,
+  ProductBundle,
   User,
   Vendor,
 } from './types';
@@ -20,10 +21,12 @@ import { VendorDashboard } from './components/VendorDashboard';
 import { PosTerminal } from './components/PosTerminal';
 import { CartDrawer } from './components/CartDrawer';
 import { AuthModal } from './components/AuthModal';
+import { LiveVoiceDrawer } from './components/LiveVoiceDrawer';
 
 interface BootstrapResponse {
   categories: Category[];
   products: Product[];
+  bundles: ProductBundle[];
   menuItems: MenuItem[];
   sections: HomepageSection[];
   cmsPages: CmsPage[];
@@ -41,6 +44,7 @@ export default function App() {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [bundles, setBundles] = useState<ProductBundle[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [sections, setSections] = useState<HomepageSection[]>([]);
   const [cmsPages, setCmsPages] = useState<CmsPage[]>([]);
@@ -55,12 +59,40 @@ export default function App() {
   const [searchSelectedProduct, setSearchSelectedProduct] = useState<Product | null>(null);
   const [wishlistIds, setWishlistIds] = useState<number[]>([]);
   const [wishlistItems, setWishlistItems] = useState<Product[]>([]);
+  const [compareIds, setCompareIds] = useState<number[]>([]);
+  const [liveVoiceOpen, setLiveVoiceOpen] = useState(false);
+  const [wishlistToast, setWishlistToast] = useState<{
+    id: number;
+    title: string;
+    saved: boolean;
+  } | null>(null);
+  const wishlistToastTimerRef = useRef<number | null>(null);
+
+  const showWishlistToast = useCallback((title: string, saved: boolean) => {
+    if (wishlistToastTimerRef.current) {
+      window.clearTimeout(wishlistToastTimerRef.current);
+    }
+    setWishlistToast({ id: Date.now(), title, saved });
+    wishlistToastTimerRef.current = window.setTimeout(() => {
+      setWishlistToast(null);
+      wishlistToastTimerRef.current = null;
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (wishlistToastTimerRef.current) {
+        window.clearTimeout(wishlistToastTimerRef.current);
+      }
+    };
+  }, []);
 
   const loadBootstrap = useCallback(async () => {
     try {
       const data = await apiRequest<BootstrapResponse>('/api/storefront/bootstrap');
       setCategories(data.categories);
       setProducts(data.products);
+      setBundles(data.bundles || []);
       setMenuItems(data.menuItems);
       setSections(data.sections);
       setCmsPages(data.cmsPages);
@@ -158,6 +190,28 @@ export default function App() {
     setCartOpen(true);
   };
 
+  const handleAddBundleToCart = (bundle: ProductBundle, quantity = 1) => {
+    const key = `bundle:${bundle.id}`;
+    const variantLabel = `Bundle · ${bundle.items.length} items · Save ${bundle.discount_percent}%`;
+    setCart((prev) => {
+      const existing = prev.find((i) => i.key === key);
+      if (existing) {
+        return prev.map((i) => (i.key === key ? { ...i, quantity: i.quantity + quantity } : i));
+      }
+      return [
+        ...prev,
+        {
+          key,
+          bundle,
+          variantLabel,
+          unitPrice: bundle.bundle_price,
+          quantity,
+        },
+      ];
+    });
+    setCartOpen(true);
+  };
+
   const handleReorderItems = (
     reorderList: Array<{ product: Product; variantLabel: string; unitPrice: number; quantity: number }>
   ) => {
@@ -200,6 +254,7 @@ export default function App() {
       return;
     }
     try {
+      const targetTitle = products.find((p) => p.id === productId)?.title || 'Product';
       const res = await apiRequest<{ saved: boolean; wishlistIds: number[]; items: Product[] }>(
         '/api/wishlist/toggle',
         {
@@ -209,6 +264,7 @@ export default function App() {
       );
       setWishlistIds(res.wishlistIds);
       setWishlistItems(res.items);
+      showWishlistToast(targetTitle, res.saved);
     } catch {
       // ignore transient wishlist errors
     }
@@ -217,15 +273,32 @@ export default function App() {
   const handleRemoveWishlist = async (productId: number) => {
     if (!user) return;
     try {
+      const targetTitle =
+        wishlistItems.find((p) => p.id === productId)?.title ||
+        products.find((p) => p.id === productId)?.title ||
+        'Product';
       const res = await apiRequest<{ wishlistIds: number[]; items: Product[] }>(
         `/api/wishlist/${productId}`,
         { method: 'DELETE' }
       );
       setWishlistIds(res.wishlistIds);
       setWishlistItems(res.items);
+      showWishlistToast(targetTitle, false);
     } catch {
       // ignore transient wishlist errors
     }
+  };
+
+  const handleToggleCompare = (productId: number) => {
+    setCompareIds((prev) => {
+      if (prev.includes(productId)) {
+        return prev.filter((id) => id !== productId);
+      }
+      if (prev.length >= 4) {
+        return [...prev.slice(1), productId];
+      }
+      return [...prev, productId];
+    });
   };
 
   const handleLogout = async () => {
@@ -251,7 +324,7 @@ export default function App() {
   void vendor;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8F9FB] text-slate-900">
+    <div id="omnimart-app-shell" className="min-h-screen flex flex-col bg-[#F8F9FB] text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       {showAnnouncement && (
         <div className="bg-slate-900 text-slate-100 text-xs px-4 h-9 flex items-center justify-between">
           <div className="flex-1 text-center truncate px-4">
@@ -275,6 +348,7 @@ export default function App() {
         currency={currency}
         cartCount={cartCount}
         wishlistCount={wishlistIds.length}
+        compareCount={compareIds.length}
         user={user}
         workspace={workspace}
         onSelectWorkspace={handleSelectWorkspace}
@@ -292,6 +366,7 @@ export default function App() {
           }
         }}
         onOpenCart={() => setCartOpen(true)}
+        onOpenVoice={() => setLiveVoiceOpen(true)}
         onOpenAuth={() => setAuthOpen(true)}
         onLogout={handleLogout}
       />
@@ -350,6 +425,7 @@ export default function App() {
         ) : workspace === 'storefront' ? (
           <StorefrontView
             products={products}
+            bundles={bundles}
             categories={categories}
             sections={sections}
             cmsPages={cmsPages}
@@ -360,12 +436,24 @@ export default function App() {
             externalSelectedProduct={searchSelectedProduct}
             wishlistIds={wishlistIds}
             wishlistItems={wishlistItems}
+            compareIds={compareIds}
+            storeName={settings.store_name || 'OmniMart'}
+            supportEmail={settings.support_email || 'support@omnimart.com'}
             onClearExternalProduct={() => setSearchSelectedProduct(null)}
             onNavigateRoute={setRoute}
             onAddToCart={handleAddToCart}
+            onAddBundleToCart={handleAddBundleToCart}
             onReorderItems={handleReorderItems}
             onToggleWishlist={handleToggleWishlist}
             onRemoveWishlist={handleRemoveWishlist}
+            onToggleCompare={handleToggleCompare}
+            onClearCompare={() => setCompareIds([])}
+            onOpenVoice={() => setLiveVoiceOpen(true)}
+            onDataMutated={loadBootstrap}
+            onAuthSuccess={(u, v) => {
+              setUser(u);
+              setVendor(v);
+            }}
             onOpenAuth={() => setAuthOpen(true)}
             onCurrencyChange={setCurrency}
           />
@@ -415,6 +503,13 @@ export default function App() {
               ))}
               <button
                 type="button"
+                onClick={() => setRoute('account')}
+                className="hover:text-slate-900"
+              >
+                Account &amp; Rewards
+              </button>
+              <button
+                type="button"
                 onClick={() => setRoute('orders')}
                 className="hover:text-slate-900"
               >
@@ -426,6 +521,27 @@ export default function App() {
                 className="hover:text-slate-900"
               >
                 Wishlist
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoute('compare')}
+                className="hover:text-slate-900"
+              >
+                Compare
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoute('bundles')}
+                className="hover:text-slate-900"
+              >
+                Bundle Builder
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoute('studio')}
+                className="hover:text-slate-900"
+              >
+                Motion Studio
               </button>
               <button
                 type="button"
@@ -451,7 +567,15 @@ export default function App() {
         user={user}
         onUpdateQty={handleUpdateQty}
         onClearCart={() => setCart([])}
-        onOrderSuccess={loadBootstrap}
+        onOrderSuccess={() => {
+          loadBootstrap();
+          loadSession();
+        }}
+      />
+
+      <LiveVoiceDrawer
+        isOpen={liveVoiceOpen}
+        onClose={() => setLiveVoiceOpen(false)}
       />
 
       <AuthModal
@@ -464,6 +588,54 @@ export default function App() {
           else if (u.role === 'vendor') setWorkspace('vendor');
         }}
       />
+
+      {wishlistToast && (
+        <div
+          key={wishlistToast.id}
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 max-w-sm w-[calc(100%-2.5rem)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3.5 flex items-center gap-3"
+        >
+          <div
+            className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+              wishlistToast.saved
+                ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+            }`}
+          >
+            <Heart className={`w-4 h-4 ${wishlistToast.saved ? 'fill-rose-500 text-rose-500' : ''}`} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+              {wishlistToast.saved ? 'Added to Wishlist' : 'Removed from Wishlist'}
+            </div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              {wishlistToast.title}
+            </div>
+          </div>
+          {wishlistToast.saved && (
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspace('storefront');
+                setRoute('wishlist');
+                setWishlistToast(null);
+              }}
+              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap shrink-0"
+            >
+              View Wishlist
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setWishlistToast(null)}
+            aria-label="Dismiss notification"
+            className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

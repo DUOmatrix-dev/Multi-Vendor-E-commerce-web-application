@@ -11,24 +11,29 @@ import {
   ArrowLeft,
   Columns3,
   List,
+  Layers,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
-  AreaChart,
+  ComposedChart,
   Area,
+  Line,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
+  ReferenceLine,
 } from 'recharts';
-import { Category, CurrencyCode, Order, Payout, Product, Vendor } from '../types';
+import { Category, CurrencyCode, Order, Payout, Product, ProductBundle, Vendor } from '../types';
 import { apiRequest } from '../lib/api';
 import { formatMoney } from '../lib/currency';
 import { ResilientImage } from './ResilientImage';
 import { ProductFormModal } from './ProductFormModal';
 import { OrderKanbanBoard } from './OrderKanbanBoard';
+import { BundleBuilderView } from './BundleBuilderView';
 
 interface VendorDailySale {
   day: string;
@@ -53,7 +58,7 @@ interface VendorDashboardProps {
   onBackToStorefront: () => void;
 }
 
-type VendorTab = 'overview' | 'products' | 'orders' | 'payouts' | 'profile';
+type VendorTab = 'overview' | 'products' | 'bundles' | 'orders' | 'payouts' | 'profile';
 
 export const VendorDashboard: React.FC<VendorDashboardProps> = ({
   currency,
@@ -65,11 +70,14 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
   const [error, setError] = useState('');
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [vendorBundles, setVendorBundles] = useState<ProductBundle[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [dailySales, setDailySales] = useState<VendorDailySale[]>([]);
   const [topProducts, setTopProducts] = useState<VendorTopProduct[]>([]);
+  const [smaWindow, setSmaWindow] = useState<3 | 5 | 7>(3);
+  const [forecastHorizon, setForecastHorizon] = useState<3 | 5 | 7>(5);
 
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -106,6 +114,8 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
       setTopProducts(data.topProducts || []);
       setShopName(data.vendor.shop_name);
       setShopDesc(data.vendor.description);
+      const bundleRes = await apiRequest<{ bundles: ProductBundle[] }>('/api/bundles?mine=1');
+      setVendorBundles(bundleRes.bundles || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load vendor dashboard');
     } finally {
@@ -183,6 +193,7 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
   const navItems: Array<{ id: VendorTab; label: string; icon: React.ReactNode }> = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'products', label: 'My Products', icon: <Package className="w-4 h-4" /> },
+    { id: 'bundles', label: 'Bundle Builder', icon: <Layers className="w-4 h-4" /> },
     { id: 'orders', label: 'Orders & Fulfillment', icon: <ShoppingBag className="w-4 h-4" /> },
     { id: 'payouts', label: 'Earnings & Payouts', icon: <Wallet className="w-4 h-4" /> },
     { id: 'profile', label: 'Shop Profile', icon: <Store className="w-4 h-4" /> },
@@ -310,70 +321,230 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* Sales Trends & Top Products Data Visualization */}
+                  {/* Sales Trends, Simple Moving Average Forecast & Top Products Data Visualization */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <h2 className="text-base font-semibold text-slate-900">Daily Net Revenue</h2>
-                          <p className="text-xs text-slate-500">Vendor payout trend after platform commission</p>
-                        </div>
-                        <span className="text-xs font-mono text-slate-500 tabular-nums">
-                          {dailySales.length} active days
-                        </span>
-                      </div>
+                    {(() => {
+                      const sorted = [...dailySales].sort((a, b) => a.day.localeCompare(b.day));
+                      const byDay = new Map(sorted.map((d) => [d.day, d]));
 
-                      {dailySales.length === 0 ? (
-                        <div className="h-64 flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                          No sales recorded yet for this shop.
+                      const contiguousActual: Array<{ day: string; revenue: number }> = [];
+                      if (sorted.length > 0) {
+                        const startMs = new Date(`${sorted[0].day}T12:00:00Z`).getTime();
+                        const endMs = new Date(`${sorted[sorted.length - 1].day}T12:00:00Z`).getTime();
+                        const oneDay = 24 * 60 * 60 * 1000;
+                        for (let ts = startMs; ts <= endMs; ts += oneDay) {
+                          const iso = new Date(ts).toISOString().slice(0, 10);
+                          contiguousActual.push({
+                            day: iso,
+                            revenue: Number((byDay.get(iso)?.revenue || 0).toFixed(2)),
+                          });
+                        }
+                      }
+
+                      const combinedValues = contiguousActual.map((d) => d.revenue);
+                      const chartData: Array<{
+                        day: string;
+                        actualRevenue: number | null;
+                        movingAverage: number | null;
+                        forecastRevenue: number | null;
+                        isForecast: boolean;
+                      }> = contiguousActual.map((entry, idx) => {
+                        const startIdx = Math.max(0, idx - smaWindow + 1);
+                        const slice = combinedValues.slice(startIdx, idx + 1);
+                        const smaVal = Number(
+                          (slice.reduce((s, v) => s + v, 0) / slice.length).toFixed(2)
+                        );
+                        return {
+                          day: entry.day,
+                          actualRevenue: entry.revenue,
+                          movingAverage: smaVal,
+                          forecastRevenue: idx === contiguousActual.length - 1 ? smaVal : null,
+                          isForecast: false,
+                        };
+                      });
+
+                      const lastActualDay = contiguousActual[contiguousActual.length - 1]?.day || '';
+                      const trailingSmaDaily =
+                        chartData.length > 0 ? chartData[chartData.length - 1].movingAverage || 0 : 0;
+
+                      let projectedTotal = 0;
+                      if (lastActualDay) {
+                        const lastMs = new Date(`${lastActualDay}T12:00:00Z`).getTime();
+                        const oneDay = 24 * 60 * 60 * 1000;
+                        const rollingWindow = [...combinedValues];
+                        for (let step = 1; step <= forecastHorizon; step++) {
+                          const recent = rollingWindow.slice(-smaWindow);
+                          const predicted = Number(
+                            (recent.reduce((s, v) => s + v, 0) / Math.max(1, recent.length)).toFixed(2)
+                          );
+                          rollingWindow.push(predicted);
+                          projectedTotal += predicted;
+                          const futureIso = new Date(lastMs + step * oneDay).toISOString().slice(0, 10);
+                          chartData.push({
+                            day: futureIso,
+                            actualRevenue: null,
+                            movingAverage: null,
+                            forecastRevenue: predicted,
+                            isForecast: true,
+                          });
+                        }
+                      }
+
+                      return (
+                        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <h2 className="text-base font-semibold text-slate-900">
+                                Daily Net Revenue &amp; Sales Forecast
+                              </h2>
+                              <p className="text-xs text-slate-500">
+                                {smaWindow}-day Simple Moving Average (SMA) · +{forecastHorizon}-day projection
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                                {([3, 5, 7] as const).map((w) => (
+                                  <button
+                                    key={w}
+                                    type="button"
+                                    onClick={() => setSmaWindow(w)}
+                                    className={`px-2 py-1 rounded-md font-mono text-[11px] whitespace-nowrap transition-colors ${
+                                      smaWindow === w
+                                        ? 'bg-white text-slate-900 font-semibold shadow-xs'
+                                        : 'text-slate-500 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    {w}D SMA
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                                {([3, 5, 7] as const).map((h) => (
+                                  <button
+                                    key={h}
+                                    type="button"
+                                    onClick={() => setForecastHorizon(h)}
+                                    className={`px-2 py-1 rounded-md font-mono text-[11px] whitespace-nowrap transition-colors ${
+                                      forecastHorizon === h
+                                        ? 'bg-white text-emerald-700 font-semibold shadow-xs'
+                                        : 'text-slate-500 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    +{h}D
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {dailySales.length > 0 && (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                              <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+                                <div className="text-slate-500">{smaWindow}-Day SMA Run Rate</div>
+                                <div className="font-mono font-bold text-slate-900 tabular-nums mt-0.5">
+                                  {formatMoney(trailingSmaDaily, currency)}/day
+                                </div>
+                              </div>
+                              <div className="px-3 py-2 bg-emerald-50/70 border border-emerald-200 rounded-lg">
+                                <div className="text-emerald-800">Next {forecastHorizon} Days Forecast</div>
+                                <div className="font-mono font-bold text-emerald-900 tabular-nums mt-0.5">
+                                  {formatMoney(projectedTotal, currency)}
+                                </div>
+                              </div>
+                              <div className="hidden sm:block px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+                                <div className="text-slate-500">Observed Window</div>
+                                <div className="font-mono font-semibold text-slate-800 tabular-nums mt-0.5">
+                                  {contiguousActual.length} days ({dailySales.length} active)
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {dailySales.length === 0 ? (
+                            <div className="h-64 flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-lg">
+                              No sales recorded yet for this shop.
+                            </div>
+                          ) : (
+                            <div className="h-72 w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                                  <defs>
+                                    <linearGradient id="vendorRevenueFill" x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor="#2563EB" stopOpacity={0.2} />
+                                      <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
+                                    </linearGradient>
+                                  </defs>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                                  <XAxis
+                                    dataKey="day"
+                                    tickFormatter={(d: string) => d.slice(5)}
+                                    tick={{ fontSize: 11, fill: '#64748B' }}
+                                    axisLine={{ stroke: '#E2E8F0' }}
+                                    tickLine={false}
+                                  />
+                                  <YAxis
+                                    tickFormatter={(v: number) => `$${v}`}
+                                    tick={{ fontSize: 11, fill: '#64748B' }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    width={56}
+                                  />
+                                  <Tooltip
+                                    formatter={(value, name) => [
+                                      formatMoney(Number(value ?? 0), currency),
+                                      String(name),
+                                    ]}
+                                    labelFormatter={(label) => `Date: ${String(label)}`}
+                                    contentStyle={{
+                                      borderRadius: '8px',
+                                      border: '1px solid #E2E8F0',
+                                      fontSize: '12px',
+                                    }}
+                                  />
+                                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
+                                  {lastActualDay && (
+                                    <ReferenceLine
+                                      x={lastActualDay}
+                                      stroke="#94A3B8"
+                                      strokeDasharray="3 3"
+                                    />
+                                  )}
+                                  <Area
+                                    type="monotone"
+                                    dataKey="actualRevenue"
+                                    name="Actual Net Revenue"
+                                    stroke="#2563EB"
+                                    strokeWidth={2}
+                                    fillOpacity={1}
+                                    fill="url(#vendorRevenueFill)"
+                                    connectNulls={false}
+                                  />
+                                  <Line
+                                    type="monotone"
+                                    dataKey="movingAverage"
+                                    name={`${smaWindow}D Moving Avg`}
+                                    stroke="#0F172A"
+                                    strokeWidth={1.75}
+                                    dot={false}
+                                    connectNulls={false}
+                                  />
+                                  <Line
+                                    type="monotone"
+                                    dataKey="forecastRevenue"
+                                    name={`Forecast (+${forecastHorizon}D SMA)`}
+                                    stroke="#059669"
+                                    strokeWidth={2.25}
+                                    strokeDasharray="5 4"
+                                    dot={{ r: 3, fill: '#059669' }}
+                                    connectNulls={true}
+                                  />
+                                </ComposedChart>
+                              </ResponsiveContainer>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className="h-64 w-full">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={dailySales} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                              <defs>
-                                <linearGradient id="vendorRevenueFill" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%" stopColor="#2563EB" stopOpacity={0.22} />
-                                  <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                              <XAxis
-                                dataKey="day"
-                                tickFormatter={(d: string) => d.slice(5)}
-                                tick={{ fontSize: 11, fill: '#64748B' }}
-                                axisLine={{ stroke: '#E2E8F0' }}
-                                tickLine={false}
-                              />
-                              <YAxis
-                                tickFormatter={(v: number) => `$${v}`}
-                                tick={{ fontSize: 11, fill: '#64748B' }}
-                                axisLine={false}
-                                tickLine={false}
-                                width={56}
-                              />
-                              <Tooltip
-                                formatter={(value) => [formatMoney(Number(value ?? 0), currency), 'Net Payout']}
-                                labelFormatter={(label) => `Date: ${String(label)}`}
-                                contentStyle={{
-                                  borderRadius: '8px',
-                                  border: '1px solid #E2E8F0',
-                                  fontSize: '12px',
-                                }}
-                              />
-                              <Area
-                                type="monotone"
-                                dataKey="revenue"
-                                stroke="#2563EB"
-                                strokeWidth={2}
-                                fillOpacity={1}
-                                fill="url(#vendorRevenueFill)"
-                              />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-                    </div>
+                      );
+                    })()}
 
                     <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
                       <div className="flex items-center justify-between gap-2">
@@ -540,6 +711,26 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
                     </table>
                   </div>
                 </div>
+              )}
+
+              {tab === 'bundles' && vendor && (
+                <BundleBuilderView
+                  products={products.map((p) => ({ ...p, vendor_name: vendor.shop_name }))}
+                  bundles={vendorBundles}
+                  currency={currency}
+                  user={{
+                    id: vendor.user_id,
+                    name: vendor.shop_name,
+                    email: vendor.owner_email || '',
+                    role: 'vendor',
+                  }}
+                  vendorIdScope={vendor.id}
+                  embeddedInPortal
+                  onDataMutated={() => {
+                    loadVendorData();
+                    onDataMutated();
+                  }}
+                />
               )}
 
               {tab === 'orders' && (

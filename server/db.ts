@@ -20,6 +20,7 @@ export function initDatabase() {
       address TEXT DEFAULT '',
       city TEXT DEFAULT '',
       postal_code TEXT DEFAULT '',
+      loyalty_points INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -93,6 +94,13 @@ export function initDatabase() {
       total REAL NOT NULL,
       coupon_code TEXT DEFAULT '',
       source TEXT NOT NULL DEFAULT 'storefront',
+      expected_delivery_date TEXT DEFAULT '',
+      shipping_carrier TEXT DEFAULT 'OmniExpress Courier',
+      tracking_code TEXT DEFAULT '',
+      points_earned INTEGER NOT NULL DEFAULT 0,
+      points_redeemed INTEGER NOT NULL DEFAULT 0,
+      loyalty_discount REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     );
@@ -196,11 +204,191 @@ export function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS loyalty_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      order_id INTEGER,
+      points_delta INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bundles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vendor_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      description TEXT DEFAULT '',
+      discount_percent REAL NOT NULL DEFAULT 10,
+      image_url TEXT DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS bundle_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bundle_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(bundle_id, product_id),
+      FOREIGN KEY (bundle_id) REFERENCES bundles(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
   `);
+
+  // Safe schema migration for existing SQLite databases
+  const userCols = db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+  const userColNames = new Set(userCols.map((c) => c.name));
+  if (!userColNames.has('loyalty_points')) {
+    db.exec(`ALTER TABLE users ADD COLUMN loyalty_points INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  const orderCols = db.prepare(`PRAGMA table_info(orders)`).all() as Array<{ name: string }>;
+  const colNames = new Set(orderCols.map((c) => c.name));
+  if (!colNames.has('expected_delivery_date')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN expected_delivery_date TEXT DEFAULT ''`);
+  }
+  if (!colNames.has('shipping_carrier')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN shipping_carrier TEXT DEFAULT 'OmniExpress Courier'`);
+  }
+  if (!colNames.has('tracking_code')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN tracking_code TEXT DEFAULT ''`);
+  }
+  if (!colNames.has('points_earned')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN points_earned INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!colNames.has('points_redeemed')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN points_redeemed INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!colNames.has('loyalty_discount')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN loyalty_discount REAL NOT NULL DEFAULT 0`);
+  }
+  if (!colNames.has('updated_at')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
+    db.exec(`UPDATE orders SET updated_at = created_at WHERE updated_at = ''`);
+  }
+
+  const orderItemCols = db.prepare(`PRAGMA table_info(order_items)`).all() as Array<{ name: string }>;
+  const orderItemColNames = new Set(orderItemCols.map((c) => c.name));
+  if (!orderItemColNames.has('bundle_id')) {
+    db.exec(`ALTER TABLE order_items ADD COLUMN bundle_id INTEGER DEFAULT NULL`);
+  }
 
   const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number };
   if (userCount.cnt === 0) {
     seedInitialData();
+  }
+
+  // Ensure existing orders have populated tracking metadata and expected delivery dates
+  db.exec(`
+    UPDATE orders
+    SET
+      shipping_carrier = CASE
+        WHEN shipping_carrier IS NULL OR shipping_carrier = '' THEN
+          CASE WHEN source = 'pos' THEN 'In-Store Pickup' ELSE 'OmniExpress Courier' END
+        ELSE shipping_carrier
+      END,
+      tracking_code = CASE
+        WHEN tracking_code IS NULL OR tracking_code = '' THEN 'TRK-' || order_number
+        ELSE tracking_code
+      END,
+      expected_delivery_date = CASE
+        WHEN expected_delivery_date IS NULL OR expected_delivery_date = '' THEN
+          CASE
+            WHEN source = 'pos' THEN substr(created_at, 1, 10)
+            ELSE date(substr(created_at, 1, 10), '+4 days')
+          END
+        ELSE expected_delivery_date
+      END,
+      updated_at = CASE
+        WHEN updated_at IS NULL OR updated_at = '' THEN created_at
+        ELSE updated_at
+      END
+  `);
+
+  // Backfill loyalty points for customer accounts that have existing orders but zero ledger entries yet
+  const txCount = db.prepare('SELECT COUNT(*) as cnt FROM loyalty_transactions').get() as { cnt: number };
+  if (txCount.cnt === 0) {
+    const customers = db.prepare("SELECT id FROM users WHERE role = 'customer'").all() as Array<{ id: number }>;
+    for (const c of customers) {
+      let running = 150;
+      db.prepare(
+        `INSERT INTO loyalty_transactions (user_id, order_id, points_delta, type, description)
+         VALUES (?, NULL, 150, 'bonus', 'OmniMart Rewards Member Welcome Bonus')`
+      ).run(c.id);
+
+      const userOrders = db.prepare(
+        "SELECT id, order_number, total, created_at FROM orders WHERE user_id = ? AND order_status != 'cancelled' ORDER BY id ASC"
+      ).all(c.id) as Array<{ id: number; order_number: string; total: number; created_at: string }>;
+
+      for (const ord of userOrders) {
+        const pts = Math.max(1, Math.round(ord.total));
+        running += pts;
+        db.prepare('UPDATE orders SET points_earned = ? WHERE id = ?').run(pts, ord.id);
+        db.prepare(
+          `INSERT INTO loyalty_transactions (user_id, order_id, points_delta, type, description, created_at)
+           VALUES (?, ?, ?, 'earn', ?, ?)`
+        ).run(c.id, ord.id, pts, `Earned from order ${ord.order_number}`, ord.created_at);
+      }
+
+      db.prepare('UPDATE users SET loyalty_points = ? WHERE id = ?').run(running, c.id);
+    }
+  }
+
+  // Seed curated multi-product bundles if none exist yet
+  const bundleCount = db.prepare('SELECT COUNT(*) as cnt FROM bundles').get() as { cnt: number };
+  if (bundleCount.cnt === 0) {
+    const aetherVendor = db.prepare("SELECT id FROM vendors WHERE slug = 'aether-audio'").get() as { id: number } | undefined;
+    const nordicVendor = db.prepare("SELECT id FROM vendors WHERE slug = 'nordic-atelier'").get() as { id: number } | undefined;
+
+    const prodHeadphones = db.prepare("SELECT id, image_url FROM products WHERE sku = 'OM-AUD-001'").get() as { id: number; image_url: string } | undefined;
+    const prodKeyboard = db.prepare("SELECT id FROM products WHERE sku = 'OM-KEY-005'").get() as { id: number } | undefined;
+    const prodLicense = db.prepare("SELECT id FROM products WHERE sku = 'OM-LIC-008'").get() as { id: number } | undefined;
+
+    const prodEspresso = db.prepare("SELECT id, image_url FROM products WHERE sku = 'OM-HOM-004'").get() as { id: number; image_url: string } | undefined;
+    const prodLamp = db.prepare("SELECT id FROM products WHERE sku = 'OM-LMP-006'").get() as { id: number } | undefined;
+
+    const insertBundle = db.prepare(`
+      INSERT INTO bundles (vendor_id, title, slug, description, discount_percent, image_url, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `);
+    const insertBundleItem = db.prepare(`
+      INSERT INTO bundle_items (bundle_id, product_id, quantity) VALUES (?, ?, ?)
+    `);
+
+    if (aetherVendor && prodHeadphones && prodKeyboard) {
+      const b1 = insertBundle.run(
+        aetherVendor.id,
+        'Studio Acoustics & Tactile Desk Kit',
+        'studio-acoustics-tactile-desk-kit',
+        'Pair our ANC Studio Reference Headphones with the CNC 75% Mechanical Keyboard and Acoustic Firmware Suite for a calibrated desk setup.',
+        15,
+        prodHeadphones.image_url
+      ).lastInsertRowid;
+      insertBundleItem.run(b1, prodHeadphones.id, 1);
+      insertBundleItem.run(b1, prodKeyboard.id, 1);
+      if (prodLicense) {
+        insertBundleItem.run(b1, prodLicense.id, 1);
+      }
+    }
+
+    if (nordicVendor && prodEspresso && prodLamp) {
+      const b2 = insertBundle.run(
+        nordicVendor.id,
+        'Morning Espresso & Architectural Lighting Set',
+        'morning-espresso-lighting-set',
+        'Designed for serene kitchen counters and reading nooks: dual-PID espresso extraction paired with warm 2700K stoneware illumination.',
+        12,
+        prodEspresso.image_url
+      ).lastInsertRowid;
+      insertBundleItem.run(b2, prodEspresso.id, 1);
+      insertBundleItem.run(b2, prodLamp.id, 1);
+    }
   }
 }
 

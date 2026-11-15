@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
@@ -13,6 +14,11 @@
     color: #0F172A;
   }
 
+  html.dark body {
+    background-color: #020617;
+    color: #F8FAFC;
+  }
+
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
   }
@@ -24,4 +30,41 @@
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+@page {
+  size: auto;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.has-invoice-print #omnimart-app-shell {
+    display: none !important;
+  }
+
+  #invoice-modal-backdrop {
+    position: static !important;
+    inset: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  #printable-invoice {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
 }

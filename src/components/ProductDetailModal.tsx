@@ -1,16 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { X, Star, ShoppingBag, ShieldCheck, ExternalLink, Heart } from 'lucide-react';
+import { X, Star, ShoppingBag, ShieldCheck, ExternalLink, Heart, Scale } from 'lucide-react';
 import { CurrencyCode, Product, Review, User } from '../types';
 import { formatMoney, parseAttributes } from '../lib/currency';
 import { apiRequest } from '../lib/api';
 import { ResilientImage } from './ResilientImage';
+import { ProductReviews } from './ProductReviews';
 
 interface ProductDetailModalProps {
   product: Product | null;
   currency: CurrencyCode;
   user: User | null;
   isWishlisted?: boolean;
+  isCompared?: boolean;
   onToggleWishlist?: (productId: number) => void;
+  onToggleCompare?: (productId: number) => void;
+  onOpenFullPage?: (product: Product) => void;
+  onOpenAuth?: () => void;
+  onReviewSubmitted?: () => void;
   onClose: () => void;
   onAddToCart: (product: Product, variantLabel: string, unitPrice: number, quantity: number) => void;
 }
@@ -20,7 +26,12 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   currency,
   user,
   isWishlisted = false,
+  isCompared = false,
   onToggleWishlist,
+  onToggleCompare,
+  onOpenFullPage,
+  onOpenAuth,
+  onReviewSubmitted,
   onClose,
   onAddToCart,
 }) => {
@@ -28,51 +39,39 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const [unitPrice, setUnitPrice] = useState<number>(0);
   const [qty, setQty] = useState(1);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [rating, setRating] = useState(5);
-  const [comment, setComment] = useState('');
-  const [authorName, setAuthorName] = useState('');
-  const [submittingReview, setSubmittingReview] = useState(false);
+  const [canReview, setCanReview] = useState(false);
+  const [liveRating, setLiveRating] = useState<number>(0);
 
   const attrs = product ? parseAttributes(product.attributes_json) : [];
 
   useEffect(() => {
     if (!product) return;
     setQty(1);
+    setLiveRating(product.rating);
     const parsed = parseAttributes(product.attributes_json);
     const firstOpt = parsed[0]?.options?.[0];
     setSelectedVariant(firstOpt?.label || '');
     setUnitPrice(product.price + (firstOpt?.priceDelta || 0));
 
-    apiRequest<{ reviews: Review[] }>(`/api/products/${product.id}`)
-      .then((res) => setReviews(res.reviews))
-      .catch(() => setReviews([]));
-  }, [product]);
+    apiRequest<{ reviews: Review[]; canReview?: boolean; product?: Product }>(
+      `/api/products/${product.id}`
+    )
+      .then((res) => {
+        setReviews(res.reviews);
+        setCanReview(Boolean(res.canReview));
+        if (res.product) setLiveRating(res.product.rating);
+      })
+      .catch(() => {
+        setReviews([]);
+        setCanReview(false);
+      });
+  }, [product, user?.id]);
 
   if (!product) return null;
 
   const handleSelectOption = (label: string, priceDelta: number) => {
     setSelectedVariant(label);
     setUnitPrice(Math.max(0, product.price + priceDelta));
-  };
-
-  const submitReview = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!comment.trim()) return;
-    setSubmittingReview(true);
-    try {
-      const res = await apiRequest<{ reviews: Review[] }>(`/api/products/${product.id}/reviews`, {
-        method: 'POST',
-        body: JSON.stringify({
-          authorName: user?.name || authorName || 'Verified Buyer',
-          rating,
-          comment,
-        }),
-      });
-      setReviews(res.reviews);
-      setComment('');
-    } finally {
-      setSubmittingReview(false);
-    }
   };
 
   return (
@@ -86,14 +85,28 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <span aria-hidden="true">·</span>
             <span className="font-mono">{product.sku}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
-            aria-label="Close product details"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenFullPage && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenFullPage(product);
+                }}
+                className="text-xs font-medium text-blue-600 hover:underline whitespace-nowrap"
+              >
+                Open Product Page
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+              aria-label="Close product details"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="overflow-y-auto p-6 space-y-8">
@@ -108,7 +121,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 <div className="flex items-center gap-3 text-sm text-slate-600">
                   <span className="inline-flex items-center gap-1 font-medium text-slate-900 tabular-nums">
                     <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-                    {product.rating.toFixed(1)}
+                    {liveRating.toFixed(1)}
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>{reviews.length} reviews</span>
@@ -160,17 +173,33 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
               {/* Purchase Controls */}
               {product.product_type === 'affiliate' && product.affiliate_url ? (
-                <a
-                  href={product.affiliate_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full inline-flex items-center justify-center gap-2 py-3 px-5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg"
-                >
-                  Visit Partner Store
-                  <ExternalLink className="w-4 h-4" />
-                </a>
+                <div className="flex items-center gap-2 pt-2">
+                  <a
+                    href={product.affiliate_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 inline-flex items-center justify-center gap-2 py-3 px-5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg"
+                  >
+                    Visit Partner Store
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                  {onToggleCompare && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleCompare(product.id)}
+                      aria-label={isCompared ? 'Remove from comparison' : 'Add to comparison'}
+                      className={`p-3 rounded-lg border transition-colors ${
+                        isCompared
+                          ? 'border-blue-300 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 bg-white text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Scale className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               ) : (
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex items-center gap-2.5 pt-2">
                   <div className="flex items-center border border-slate-200 rounded-lg">
                     <button
                       type="button"
@@ -202,6 +231,21 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       ? 'Out of Stock'
                       : 'Add to Bag'}
                   </button>
+                  {onToggleCompare && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleCompare(product.id)}
+                      aria-label={isCompared ? 'Remove from comparison' : 'Add to comparison'}
+                      title={isCompared ? 'In Compare' : 'Compare'}
+                      className={`p-3 rounded-lg border transition-colors ${
+                        isCompared
+                          ? 'border-blue-300 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 bg-white text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Scale className="w-4 h-4" />
+                    </button>
+                  )}
                   {onToggleWishlist && (
                     <button
                       type="button"
@@ -229,66 +273,27 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Reviews Section */}
-          <div className="pt-6 border-t border-slate-200 grid grid-cols-1 md:grid-cols-12 gap-6">
-            <div className="md:col-span-7 space-y-4">
-              <h3 className="text-base font-semibold text-slate-900">Customer Reviews</h3>
-              {reviews.length === 0 ? (
-                <p className="text-sm text-slate-500">No reviews yet. Be the first to review this item.</p>
-              ) : (
-                <div className="space-y-3">
-                  {reviews.map((rev) => (
-                    <div key={rev.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-900">{rev.author_name}</span>
-                        <span className="font-mono text-amber-600">{rev.rating}/5 ★</span>
-                      </div>
-                      <p className="text-sm text-slate-600">{rev.comment}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <form onSubmit={submitReview} className="md:col-span-5 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-              <div className="text-sm font-semibold text-slate-900">Write a Review</div>
-              {!user && (
-                <input
-                  type="text"
-                  value={authorName}
-                  onChange={(e) => setAuthorName(e.target.value)}
-                  placeholder="Your name"
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg"
-                />
-              )}
-              <select
-                value={rating}
-                onChange={(e) => setRating(Number(e.target.value))}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg"
-              >
-                <option value={5}>5 Stars — Exceptional</option>
-                <option value={4}>4 Stars — Very Good</option>
-                <option value={3}>3 Stars — Solid</option>
-                <option value={2}>2 Stars — Fair</option>
-                <option value={1}>1 Star — Poor</option>
-              </select>
-              <textarea
-                rows={3}
-                required
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Share material quality, fit, or setup feedback..."
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg"
-              />
-              <button
-                type="submit"
-                disabled={submittingReview}
-                className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg"
-              >
-                {submittingReview ? 'Submitting...' : 'Post Review'}
-              </button>
-            </form>
-          </div>
+          {/* Dedicated ProductReviews Component */}
+          <ProductReviews
+            productId={product.id}
+            initialRating={liveRating}
+            reviews={reviews}
+            user={user}
+            canReview={canReview}
+            onReviewsUpdated={(nextReviews, updatedRating) => {
+              setReviews(nextReviews);
+              setLiveRating(updatedRating);
+              onReviewSubmitted?.();
+            }}
+            onOpenAuth={
+              onOpenAuth
+                ? () => {
+                    onClose();
+                    onOpenAuth();
+                  }
+                : undefined
+            }
+          />
         </div>
       </div>
     </div>

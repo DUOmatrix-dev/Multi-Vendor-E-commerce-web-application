@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { X, Plus, Minus, Trash2, CheckCircle2, KeyRound, Tag } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, Plus, Minus, Trash2, CheckCircle2, KeyRound, Tag, Award } from 'lucide-react';
 import { CartItem, CurrencyCode, Order, OrderItem, User } from '../types';
 import { formatMoney } from '../lib/currency';
 import { apiRequest } from '../lib/api';
 import { ResilientImage } from './ResilientImage';
+
+const LOYALTY_POINT_VALUE = 0.05; // 100 pts = $5.00
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -44,19 +46,51 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [couponInput, setCouponInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [couponError, setCouponError] = useState('');
+  const [pointsToRedeem, setPointsToRedeem] = useState<number>(0);
 
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
-  const [confirmedOrder, setConfirmedOrder] = useState<{ order: Order; items: OrderItem[] } | null>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<{
+    order: Order;
+    items: OrderItem[];
+    pointsEarned?: number;
+    pointsRedeemed?: number;
+    loyaltyDiscount?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      setCustomerName((prev) => prev || user.name || '');
+      setCustomerEmail((prev) => prev || user.email || '');
+      setCustomerPhone((prev) => prev || user.phone || '');
+      setAddress((prev) => prev || user.address || '');
+      setCity((prev) => prev || user.city || '');
+      setPostal((prev) => prev || user.postal_code || '');
+    } else {
+      setPointsToRedeem(0);
+    }
+  }, [user]);
 
   if (!isOpen) return null;
 
   const subtotal = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
-  const discountTotal = appliedCoupon ? Math.min(subtotal, appliedCoupon.discount) : 0;
+  const couponDiscount = appliedCoupon ? Math.min(subtotal, appliedCoupon.discount) : 0;
+  const remainingSubtotal = Math.max(0, subtotal - couponDiscount);
+  const availablePoints = user?.loyalty_points || 0;
+  const maxRedeemablePoints = Math.min(
+    availablePoints,
+    Math.floor(remainingSubtotal / LOYALTY_POINT_VALUE)
+  );
+  const effectivePointsToRedeem = user
+    ? Math.max(0, Math.min(Math.floor(pointsToRedeem), maxRedeemablePoints))
+    : 0;
+  const loyaltyDiscount = Number((effectivePointsToRedeem * LOYALTY_POINT_VALUE).toFixed(2));
+  const discountTotal = Number(Math.min(subtotal, couponDiscount + loyaltyDiscount).toFixed(2));
   const taxable = Math.max(0, subtotal - discountTotal);
   const taxTotal = Number(((taxable * taxRatePercent) / 100).toFixed(2));
   const shippingTotal = taxable >= freeShippingThreshold || items.length === 0 ? 0 : flatShippingRate;
   const grandTotal = Number((taxable + taxTotal + shippingTotal).toFixed(2));
+  const estimatedPointsEarned = user && grandTotal > 0 ? Math.max(1, Math.round(grandTotal)) : 0;
 
   const handleApplyCoupon = async () => {
     if (!couponInput.trim()) return;
@@ -78,7 +112,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setSubmitting(true);
     setCheckoutError('');
     try {
-      const res = await apiRequest<{ order: Order; items: OrderItem[] }>('/api/orders', {
+      const res = await apiRequest<{
+        order: Order;
+        items: OrderItem[];
+        pointsEarned?: number;
+        pointsRedeemed?: number;
+        loyaltyDiscount?: number;
+      }>('/api/orders', {
         method: 'POST',
         body: JSON.stringify({
           customerName,
@@ -89,18 +129,29 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           shippingPostal: postal,
           paymentMethod,
           couponCode: appliedCoupon?.code || '',
+          pointsToRedeem: effectivePointsToRedeem,
           source: 'storefront',
-          items: items.map((i) => ({
-            productId: i.product.id,
-            quantity: i.quantity,
-            variantLabel: i.variantLabel,
-            unitPrice: i.unitPrice,
-          })),
+          items: items.map((i) =>
+            i.bundle
+              ? {
+                  bundleId: i.bundle.id,
+                  quantity: i.quantity,
+                  variantLabel: i.variantLabel,
+                  unitPrice: i.unitPrice,
+                }
+              : {
+                  productId: i.product?.id,
+                  quantity: i.quantity,
+                  variantLabel: i.variantLabel,
+                  unitPrice: i.unitPrice,
+                }
+          ),
         }),
       });
       setConfirmedOrder(res);
       setStep('confirmed');
       setAppliedCoupon(null);
+      setPointsToRedeem(0);
       onClearCart();
       onOrderSuccess();
     } catch (err) {
@@ -151,6 +202,31 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     : 'Payment captured · Preparing studio dispatch.'}
                 </p>
               </div>
+
+              {((confirmedOrder.pointsEarned || 0) > 0 || (confirmedOrder.pointsRedeemed || 0) > 0) && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-900">
+                    <Award className="w-4 h-4 text-blue-600" />
+                    OmniMart Rewards Summary
+                  </div>
+                  {(confirmedOrder.pointsRedeemed || 0) > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Points Redeemed</span>
+                      <span className="font-mono tabular-nums text-emerald-700">
+                        −{confirmedOrder.pointsRedeemed} pts (−{formatMoney(confirmedOrder.loyaltyDiscount || 0, currency)})
+                      </span>
+                    </div>
+                  )}
+                  {(confirmedOrder.pointsEarned || 0) > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Points Earned on Purchase</span>
+                      <span className="font-mono tabular-nums font-semibold text-blue-700">
+                        +{confirmedOrder.pointsEarned} pts
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-3">
                 <div className="text-xs font-semibold text-slate-500">Order Receipt</div>
@@ -204,21 +280,32 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           ) : step === 'cart' ? (
             <div className="space-y-5">
               <div className="divide-y divide-slate-100">
-                {items.map((item) => (
+                {items.map((item) => {
+                  const title = item.bundle ? item.bundle.title : (item.product?.title || 'Item');
+                  const imageUrl = item.bundle ? item.bundle.image_url : (item.product?.image_url || '');
+                  const bundleContents = item.bundle
+                    ? item.bundle.items.map((bi) => `${bi.quantity}× ${bi.title}`).join(' · ')
+                    : '';
+                  return (
                   <div key={item.key} className="py-4 flex gap-3.5">
                     <div className="w-20 h-16 rounded-lg overflow-hidden bg-slate-100 shrink-0">
                       <ResilientImage
-                        src={item.product.image_url}
-                        alt={item.product.title}
+                        src={imageUrl}
+                        alt={title}
                         className="w-full h-full object-cover"
                       />
                     </div>
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="text-sm font-medium text-slate-900 truncate">
-                        {item.product.title}
+                        {title}
                       </div>
                       {item.variantLabel && (
                         <div className="text-xs text-slate-500">{item.variantLabel}</div>
+                      )}
+                      {bundleContents && (
+                        <div className="text-[11px] text-slate-500 leading-snug line-clamp-2">
+                          Includes: {bundleContents}
+                        </div>
                       )}
                       <div className="flex items-center justify-between pt-1">
                         <div className="flex items-center gap-1 border border-slate-200 rounded-md">
@@ -241,6 +328,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           </button>
                         </div>
                         <div className="flex items-center gap-2">
+                          {item.bundle && item.bundle.regular_total > item.unitPrice && (
+                            <span className="text-xs font-mono text-slate-400 line-through tabular-nums">
+                              {formatMoney(item.bundle.regular_total * item.quantity, currency)}
+                            </span>
+                          )}
                           <span className="text-sm font-mono font-semibold text-slate-900 tabular-nums">
                             {formatMoney(item.unitPrice * item.quantity, currency)}
                           </span>
@@ -255,7 +347,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Coupon Input */}
@@ -283,6 +376,79 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 {appliedCoupon && (
                   <p className="text-xs text-emerald-700 font-medium">
                     Coupon {appliedCoupon.code} applied (−{formatMoney(appliedCoupon.discount, currency)})
+                  </p>
+                )}
+              </div>
+
+              {/* Loyalty Points Redemption */}
+              <div className="pt-4 border-t border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                    <Award className="w-3.5 h-3.5 text-blue-600" />
+                    OmniMart Rewards
+                  </span>
+                  {user ? (
+                    <span className="font-mono tabular-nums text-slate-600">
+                      {availablePoints.toLocaleString()} pts ({formatMoney(availablePoints * LOYALTY_POINT_VALUE, currency)})
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">Sign in to redeem</span>
+                  )}
+                </div>
+
+                {user && availablePoints > 0 && maxRedeemablePoints > 0 ? (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        max={maxRedeemablePoints}
+                        step={20}
+                        value={effectivePointsToRedeem}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value) || 0);
+                          setPointsToRedeem(Math.min(maxRedeemablePoints, val));
+                        }}
+                        aria-label="Loyalty points to redeem"
+                        className="w-24 px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600 tabular-nums"
+                      />
+                      <span className="text-xs text-slate-600 flex-1 tabular-nums">
+                        pts = <strong className="text-emerald-700">−{formatMoney(loyaltyDiscount, currency)}</strong>
+                      </span>
+                      {effectivePointsToRedeem > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setPointsToRedeem(0)}
+                          className="text-xs font-medium text-slate-500 hover:text-slate-900"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {maxRedeemablePoints >= 100 && (
+                        <button
+                          type="button"
+                          onClick={() => setPointsToRedeem(100)}
+                          className="px-2.5 py-1 text-[11px] font-medium bg-white border border-slate-200 hover:border-blue-500 rounded-md text-slate-700"
+                        >
+                          Use 100 pts (−{formatMoney(5, currency)})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setPointsToRedeem(maxRedeemablePoints)}
+                        className="px-2.5 py-1 text-[11px] font-medium bg-white border border-slate-200 hover:border-blue-500 rounded-md text-slate-700 tabular-nums"
+                      >
+                        Use Max ({maxRedeemablePoints} pts)
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500">
+                    {user
+                      ? 'Earn 1 point per $1 spent on every order (100 pts = $5.00 off).'
+                      : 'Sign in with your account to earn 1 point per $1 and redeem rewards at checkout.'}
                   </p>
                 )}
               </div>
@@ -399,10 +565,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <span>Subtotal</span>
                 <span className="font-mono tabular-nums">{formatMoney(subtotal, currency)}</span>
               </div>
-              {discountTotal > 0 && (
+              {couponDiscount > 0 && (
                 <div className="flex justify-between text-emerald-700">
-                  <span>Discount ({appliedCoupon?.code})</span>
-                  <span className="font-mono tabular-nums">−{formatMoney(discountTotal, currency)}</span>
+                  <span>Promo ({appliedCoupon?.code})</span>
+                  <span className="font-mono tabular-nums">−{formatMoney(couponDiscount, currency)}</span>
+                </div>
+              )}
+              {loyaltyDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Loyalty Rewards ({effectivePointsToRedeem} pts)</span>
+                  <span className="font-mono tabular-nums">−{formatMoney(loyaltyDiscount, currency)}</span>
                 </div>
               )}
               <div className="flex justify-between">
@@ -419,6 +591,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <span>Order Total</span>
                 <span className="font-mono tabular-nums">{formatMoney(grandTotal, currency)}</span>
               </div>
+              {estimatedPointsEarned > 0 && (
+                <div className="flex justify-between text-[11px] text-blue-700 font-medium">
+                  <span>Rewards Points Earned</span>
+                  <span className="font-mono tabular-nums">+{estimatedPointsEarned} pts</span>
+                </div>
+              )}
             </div>
 
             {step === 'cart' ? (
