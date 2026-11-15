@@ -222,6 +222,16 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
             </div>
           </div>
 
+          {/* Order Notes */}
+          {order.order_notes && (
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
+              <div className="font-semibold uppercase tracking-wider text-slate-400">
+                Customer Order Notes
+              </div>
+              <p className="text-slate-700 leading-relaxed whitespace-pre-line">{order.order_notes}</p>
+            </div>
+          )}
+
           {/* Footer Note */}
           <div className="pt-6 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-500">
             <span>Thank you for shopping with {storeName}. All multi-vendor items include buyer protection.</span>

@@ -100,6 +100,7 @@ export function initDatabase() {
       points_earned INTEGER NOT NULL DEFAULT 0,
       points_redeemed INTEGER NOT NULL DEFAULT 0,
       loyalty_discount REAL NOT NULL DEFAULT 0,
+      order_notes TEXT DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
@@ -267,6 +268,9 @@ export function initDatabase() {
   }
   if (!colNames.has('loyalty_discount')) {
     db.exec(`ALTER TABLE orders ADD COLUMN loyalty_discount REAL NOT NULL DEFAULT 0`);
+  }
+  if (!colNames.has('order_notes')) {
+    db.exec(`ALTER TABLE orders ADD COLUMN order_notes TEXT DEFAULT ''`);
   }
   if (!colNames.has('updated_at')) {
     db.exec(`ALTER TABLE orders ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);

@@ -157,6 +157,7 @@ export interface Order {
   points_earned?: number;
   points_redeemed?: number;
   loyalty_discount?: number;
+  order_notes?: string;
   updated_at?: string;
   created_at: string;
   items?: OrderItem[];

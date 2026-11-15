@@ -777,6 +777,8 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
     paymentMethod,
     couponCode,
     pointsToRedeem,
+    orderNotes,
+    checkoutAsGuest,
     source,
     posDiscount,
     items,
@@ -790,6 +792,8 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
     paymentMethod?: string;
     couponCode?: string;
     pointsToRedeem?: number;
+    orderNotes?: string;
+    checkoutAsGuest?: boolean;
     source?: 'storefront' | 'pos';
     posDiscount?: number;
     items?: Array<{
@@ -807,10 +811,21 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
   }
 
   const isPos = source === 'pos';
-  if (!isPos && (!customerName || !customerEmail || !shippingAddress)) {
-    res.status(400).json({ error: 'Customer name, email, and shipping address are required' });
+  if (
+    !isPos &&
+    (!customerEmail?.trim() ||
+      !shippingAddress?.trim() ||
+      !shippingCity?.trim() ||
+      !shippingPostal?.trim())
+  ) {
+    res.status(400).json({
+      error: 'Email and complete shipping details (street address, city, postal code) are required',
+    });
     return;
   }
+
+  const effectiveUser = !isPos && !checkoutAsGuest ? req.user || null : null;
+  const cleanedNotes = typeof orderNotes === 'string' ? orderNotes.trim().slice(0, 1000) : '';
 
   const settings = getSettingsMap();
   const taxRate = Number(settings.tax_rate || 8) / 100;
@@ -1041,8 +1056,8 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
       // Loyalty Points Redemption
       let redeemedPoints = 0;
       let loyaltyDiscount = 0;
-      if (!isPos && req.user && Number(pointsToRedeem || 0) > 0) {
-        const userRow = db.prepare('SELECT loyalty_points FROM users WHERE id = ?').get(req.user.id) as
+      if (!isPos && effectiveUser && Number(pointsToRedeem || 0) > 0) {
+        const userRow = db.prepare('SELECT loyalty_points FROM users WHERE id = ?').get(effectiveUser.id) as
           | { loyalty_points: number }
           | undefined;
         const availablePts = userRow?.loyalty_points || 0;
@@ -1060,7 +1075,7 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
       const taxTotal = Number((taxableAmount * taxRate).toFixed(2));
       const shippingTotal = isPos ? 0 : (taxableAmount >= freeThreshold ? 0 : flatShipping);
       const total = Number((taxableAmount + taxTotal + shippingTotal).toFixed(2));
-      const earnedPoints = req.user && total > 0 ? Math.max(1, Math.round(total)) : 0;
+      const earnedPoints = effectiveUser && total > 0 ? Math.max(1, Math.round(total)) : 0;
 
       const countRow = db.prepare('SELECT COUNT(*) as cnt FROM orders').get() as { cnt: number };
       const orderNumber = `OM-${10041 + countRow.cnt + Math.floor(Math.random() * 50)}`;
@@ -1075,6 +1090,8 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
         ? 'In-Store Pickup'
         : (shippingTotal === 0 ? 'OmniExpress Priority Air' : 'OmniExpress Ground');
       const trackingCode = `TRK-${orderNumber}`;
+      const resolvedCustomerName =
+        (customerName || '').trim() || (isPos ? 'Walk-in POS Guest' : 'Guest Customer');
 
       const orderRes = db.prepare(`
         INSERT INTO orders (
@@ -1083,12 +1100,12 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
           payment_status, order_status, subtotal, discount_total, tax_total,
           shipping_total, total, coupon_code, source,
           expected_delivery_date, shipping_carrier, tracking_code,
-          points_earned, points_redeemed, loyalty_discount, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          points_earned, points_redeemed, loyalty_discount, order_notes, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `).run(
         orderNumber,
-        req.user?.id || null,
-        (customerName || 'Walk-in POS Guest').trim(),
+        effectiveUser?.id || null,
+        resolvedCustomerName,
         (customerEmail || 'pos@omnimart.com').trim(),
         (customerPhone || '').trim(),
         (shippingAddress || 'In-Store Register #1').trim(),
@@ -1109,7 +1126,8 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
         trackingCode,
         earnedPoints,
         redeemedPoints,
-        loyaltyDiscount
+        loyaltyDiscount,
+        cleanedNotes
       );
 
       const orderId = Number(orderRes.lastInsertRowid);
@@ -1128,17 +1146,17 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
       }
 
       let updatedLoyaltyPoints: number | undefined;
-      if (req.user) {
+      if (effectiveUser) {
         if (redeemedPoints > 0) {
           db.prepare('UPDATE users SET loyalty_points = MAX(0, loyalty_points - ?) WHERE id = ?').run(
             redeemedPoints,
-            req.user.id
+            effectiveUser.id
           );
           db.prepare(
             `INSERT INTO loyalty_transactions (user_id, order_id, points_delta, type, description)
              VALUES (?, ?, ?, 'redeem', ?)`
           ).run(
-            req.user.id,
+            effectiveUser.id,
             orderId,
             -redeemedPoints,
             `Redeemed on order ${orderNumber} (-$${loyaltyDiscount.toFixed(2)})`
@@ -1147,14 +1165,14 @@ app.post('/api/orders', optionalAuth, (req: AuthedRequest, res: Response) => {
         if (earnedPoints > 0) {
           db.prepare('UPDATE users SET loyalty_points = loyalty_points + ? WHERE id = ?').run(
             earnedPoints,
-            req.user.id
+            effectiveUser.id
           );
           db.prepare(
             `INSERT INTO loyalty_transactions (user_id, order_id, points_delta, type, description)
              VALUES (?, ?, ?, 'earn', ?)`
-          ).run(req.user.id, orderId, earnedPoints, `Earned from order ${orderNumber}`);
+          ).run(effectiveUser.id, orderId, earnedPoints, `Earned from order ${orderNumber}`);
         }
-        const refreshed = db.prepare('SELECT loyalty_points FROM users WHERE id = ?').get(req.user.id) as {
+        const refreshed = db.prepare('SELECT loyalty_points FROM users WHERE id = ?').get(effectiveUser.id) as {
           loyalty_points: number;
         };
         updatedLoyaltyPoints = refreshed.loyalty_points;

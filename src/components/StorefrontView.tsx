@@ -586,6 +586,14 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                     </div>
                   )}
 
+                  {/* Order Notes */}
+                  {order.order_notes && (
+                    <div className="px-6 py-3 border-b border-slate-100 bg-slate-50/70 text-xs text-slate-600">
+                      <span className="font-semibold text-slate-800">Order Notes: </span>
+                      <span>{order.order_notes}</span>
+                    </div>
+                  )}
+
                   {/* Line Items */}
                   <div className="divide-y divide-slate-100 px-6">
                     {orderItems.map((it) => {
@@ -1530,6 +1538,14 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Order Notes */}
+            {trackedResult.order.order_notes && (
+              <div className="px-6 py-3 border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+                <span className="font-semibold text-slate-800">Order Notes: </span>
+                <span>{trackedResult.order.order_notes}</span>
+              </div>
+            )}
 
             {/* Shipment Items */}
             <div className="px-6 py-4">

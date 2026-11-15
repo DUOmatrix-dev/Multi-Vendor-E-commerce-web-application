@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Plus, Minus, Trash2, CheckCircle2, KeyRound, Tag, Award } from 'lucide-react';
+import { X, Plus, Minus, Trash2, CheckCircle2, KeyRound, Tag, Award, FileText, Truck } from 'lucide-react';
 import { CartItem, CurrencyCode, Order, OrderItem, User } from '../types';
 import { formatMoney } from '../lib/currency';
 import { apiRequest } from '../lib/api';
@@ -19,6 +19,8 @@ interface CartDrawerProps {
   onUpdateQty: (key: string, delta: number) => void;
   onClearCart: () => void;
   onOrderSuccess: () => void;
+  onOpenAuth?: () => void;
+  onTrackOrder?: (orderNumber: string) => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -33,14 +35,18 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onUpdateQty,
   onClearCart,
   onOrderSuccess,
+  onOpenAuth,
+  onTrackOrder,
 }) => {
   const [step, setStep] = useState<'cart' | 'checkout' | 'confirmed'>('cart');
+  const [checkoutMode, setCheckoutMode] = useState<'account' | 'guest'>(user ? 'account' : 'guest');
   const [customerName, setCustomerName] = useState(user?.name || '');
   const [customerEmail, setCustomerEmail] = useState(user?.email || '');
   const [customerPhone, setCustomerPhone] = useState(user?.phone || '');
   const [address, setAddress] = useState(user?.address || '');
   const [city, setCity] = useState(user?.city || '');
   const [postal, setPostal] = useState(user?.postal_code || '');
+  const [orderNotes, setOrderNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cod' | 'stripe' | 'paypal'>('cod');
 
   const [couponInput, setCouponInput] = useState('');
@@ -60,6 +66,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
   useEffect(() => {
     if (user) {
+      setCheckoutMode('account');
       setCustomerName((prev) => prev || user.name || '');
       setCustomerEmail((prev) => prev || user.email || '');
       setCustomerPhone((prev) => prev || user.phone || '');
@@ -67,12 +74,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       setCity((prev) => prev || user.city || '');
       setPostal((prev) => prev || user.postal_code || '');
     } else {
+      setCheckoutMode('guest');
       setPointsToRedeem(0);
     }
   }, [user]);
 
   if (!isOpen) return null;
 
+  const isGuestCheckout = !user || checkoutMode === 'guest';
   const subtotal = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
   const couponDiscount = appliedCoupon ? Math.min(subtotal, appliedCoupon.discount) : 0;
   const remainingSubtotal = Math.max(0, subtotal - couponDiscount);
@@ -81,7 +90,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     availablePoints,
     Math.floor(remainingSubtotal / LOYALTY_POINT_VALUE)
   );
-  const effectivePointsToRedeem = user
+  const effectivePointsToRedeem = !isGuestCheckout
     ? Math.max(0, Math.min(Math.floor(pointsToRedeem), maxRedeemablePoints))
     : 0;
   const loyaltyDiscount = Number((effectivePointsToRedeem * LOYALTY_POINT_VALUE).toFixed(2));
@@ -90,7 +99,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const taxTotal = Number(((taxable * taxRatePercent) / 100).toFixed(2));
   const shippingTotal = taxable >= freeShippingThreshold || items.length === 0 ? 0 : flatShippingRate;
   const grandTotal = Number((taxable + taxTotal + shippingTotal).toFixed(2));
-  const estimatedPointsEarned = user && grandTotal > 0 ? Math.max(1, Math.round(grandTotal)) : 0;
+  const estimatedPointsEarned = !isGuestCheckout && grandTotal > 0 ? Math.max(1, Math.round(grandTotal)) : 0;
 
   const handleApplyCoupon = async () => {
     if (!couponInput.trim()) return;
@@ -121,15 +130,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       }>('/api/orders', {
         method: 'POST',
         body: JSON.stringify({
-          customerName,
-          customerEmail,
-          customerPhone,
-          shippingAddress: address,
-          shippingCity: city,
-          shippingPostal: postal,
+          customerName: customerName.trim(),
+          customerEmail: customerEmail.trim(),
+          customerPhone: customerPhone.trim(),
+          shippingAddress: address.trim(),
+          shippingCity: city.trim(),
+          shippingPostal: postal.trim(),
           paymentMethod,
           couponCode: appliedCoupon?.code || '',
           pointsToRedeem: effectivePointsToRedeem,
+          orderNotes: orderNotes.trim(),
+          checkoutAsGuest: isGuestCheckout,
           source: 'storefront',
           items: items.map((i) =>
             i.bundle
@@ -152,6 +163,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       setStep('confirmed');
       setAppliedCoupon(null);
       setPointsToRedeem(0);
+      setOrderNotes('');
       onClearCart();
       onOrderSuccess();
     } catch (err) {
@@ -228,6 +240,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               )}
 
+              {confirmedOrder.order.order_notes && (
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-700">
+                    <FileText className="w-3.5 h-3.5 text-slate-500" />
+                    Order Notes
+                  </div>
+                  <p className="text-slate-600 whitespace-pre-line">{confirmedOrder.order.order_notes}</p>
+                </div>
+              )}
+
               <div className="space-y-3">
                 <div className="text-xs font-semibold text-slate-500">Order Receipt</div>
                 <div className="border border-slate-200 rounded-xl divide-y divide-slate-100">
@@ -258,13 +280,29 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={resetAndClose}
-                className="w-full py-2.5 bg-slate-900 text-white text-sm font-medium rounded-lg"
-              >
-                Continue Shopping
-              </button>
+              <div className="flex gap-2">
+                {onTrackOrder && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const orderNum = confirmedOrder.order.order_number;
+                      resetAndClose();
+                      onTrackOrder(orderNum);
+                    }}
+                    className="flex-1 py-2.5 px-3 bg-white border border-slate-200 hover:border-blue-600 text-slate-800 text-sm font-medium rounded-lg inline-flex items-center justify-center gap-1.5"
+                  >
+                    <Truck className="w-4 h-4 text-blue-600" />
+                    Track Order
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={resetAndClose}
+                  className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg"
+                >
+                  Continue Shopping
+                </button>
+              </div>
             </div>
           ) : items.length === 0 ? (
             <div className="py-16 text-center space-y-3">
@@ -452,6 +490,25 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </p>
                 )}
               </div>
+              {/* Order Notes */}
+              <div className="pt-4 border-t border-slate-200 space-y-2">
+                <label
+                  htmlFor="cart-order-notes"
+                  className="flex items-center gap-1.5 text-xs font-semibold text-slate-800"
+                >
+                  <FileText className="w-3.5 h-3.5 text-slate-500" />
+                  Order Notes
+                </label>
+                <textarea
+                  id="cart-order-notes"
+                  rows={2}
+                  maxLength={1000}
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  placeholder="Special delivery instructions, gate code, or gift note..."
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
+                />
+              </div>
             </div>
           ) : (
             <form id="checkout-form" onSubmit={handlePlaceOrder} className="space-y-4">
@@ -461,73 +518,153 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               )}
 
+              {/* Checkout Mode Banner / Toggle */}
+              {user ? (
+                <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setCheckoutMode('account')}
+                    className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-md transition-colors ${
+                      checkoutMode === 'account'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Account Checkout
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCheckoutMode('guest')}
+                    className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-md transition-colors ${
+                      checkoutMode === 'guest'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Guest Checkout
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-slate-900">Guest Checkout</div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      No account required — only your email and shipping details are needed to place your order.
+                    </p>
+                  </div>
+                  {onOpenAuth && (
+                    <button
+                      type="button"
+                      onClick={onOpenAuth}
+                      className="text-xs font-semibold text-blue-600 hover:underline whitespace-nowrap shrink-0"
+                    >
+                      Sign In
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Full Name</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Email <span className="text-red-500">*</span>
+                </label>
                 <input
-                  type="text"
+                  type="email"
                   required
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    {isGuestCheckout ? 'Recipient Name (Optional)' : 'Full Name'}
+                  </label>
                   <input
-                    type="email"
-                    required
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    type="text"
+                    required={!isGuestCheckout}
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder={isGuestCheckout ? 'Guest Customer' : 'Full name'}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Phone</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Phone (Optional)
+                  </label>
                   <input
                     type="tel"
-                    required
                     value={customerPhone}
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     placeholder="+1 415 555 0100"
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Street Address</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Street Address <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   required
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                  placeholder="500 Howard Street, Apt 4B"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">City</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    City <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     required
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    placeholder="San Francisco"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Postal Code</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Postal Code <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     required
                     value={postal}
                     onChange={(e) => setPostal(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    placeholder="94105"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="checkout-order-notes"
+                  className="block text-xs font-medium text-slate-600 mb-1"
+                >
+                  Order Notes (Optional)
+                </label>
+                <textarea
+                  id="checkout-order-notes"
+                  rows={2}
+                  maxLength={1000}
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  placeholder="Special delivery instructions, gate code, or gift note..."
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
+                />
               </div>
 
               <div className="space-y-2 pt-2">
@@ -600,13 +737,27 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             </div>
 
             {step === 'cart' ? (
-              <button
-                type="button"
-                onClick={() => setStep('checkout')}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
-              >
-                Proceed to Checkout
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!user) setCheckoutMode('guest');
+                    setStep('checkout');
+                  }}
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                >
+                  {user ? 'Proceed to Checkout' : 'Checkout as Guest'}
+                </button>
+                {!user && onOpenAuth && (
+                  <button
+                    type="button"
+                    onClick={onOpenAuth}
+                    className="w-full py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Already have an account? Sign in for rewards
+                  </button>
+                )}
+              </div>
             ) : (
               <div className="flex gap-2">
                 <button
@@ -622,7 +773,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   disabled={submitting}
                   className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
                 >
-                  {submitting ? 'Placing Order...' : `Confirm Order · ${formatMoney(grandTotal, currency)}`}
+                  {submitting
+                    ? 'Placing Order...'
+                    : `${isGuestCheckout ? 'Place Guest Order' : 'Confirm Order'} · ${formatMoney(grandTotal, currency)}`}
                 </button>
               </div>
             )}

@@ -567,6 +567,15 @@ export default function App() {
         user={user}
         onUpdateQty={handleUpdateQty}
         onClearCart={() => setCart([])}
+        onOpenAuth={() => {
+          setCartOpen(false);
+          setAuthOpen(true);
+        }}
+        onTrackOrder={() => {
+          setCartOpen(false);
+          setWorkspace('storefront');
+          setRoute('track');
+        }}
         onOrderSuccess={() => {
           loadBootstrap();
           loadSession();
