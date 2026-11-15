@@ -46,6 +46,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   useEffect(() => {
     if (!product) return;
+    let active = true;
     setQty(1);
     setLiveRating(product.rating);
     const parsed = parseAttributes(product.attributes_json);
@@ -57,14 +58,20 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
       `/api/products/${product.id}`
     )
       .then((res) => {
+        if (!active) return;
         setReviews(res.reviews);
         setCanReview(Boolean(res.canReview));
         if (res.product) setLiveRating(res.product.rating);
       })
       .catch(() => {
+        if (!active) return;
         setReviews([]);
         setCanReview(false);
       });
+
+    return () => {
+      active = false;
+    };
   }, [product, user?.id]);
 
   if (!product) return null;

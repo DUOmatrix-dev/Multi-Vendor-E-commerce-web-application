@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   ArrowRight,
@@ -54,9 +54,12 @@ import { apiRequest } from '../lib/api';
 import { ResilientImage } from './ResilientImage';
 import { ProductDetailModal } from './ProductDetailModal';
 import { ProductReviews } from './ProductReviews';
-import { VideoStudioView } from './VideoStudioView';
 import { InvoiceModal } from './InvoiceModal';
 import { BundleBuilderView } from './BundleBuilderView';
+
+const VideoStudioView = lazy(() =>
+  import('./VideoStudioView').then((m) => ({ default: m.VideoStudioView }))
+);
 
 interface StorefrontViewProps {
   products: Product[];
@@ -166,6 +169,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [shareTitleInput, setShareTitleInput] = useState('');
   const [shareSaving, setShareSaving] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [shareError, setShareError] = useState('');
 
   // Public shared wishlist viewer state
   const sharedToken = activeRoute.startsWith('shared-wishlist:')
@@ -185,25 +189,31 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [sharedError, setSharedError] = useState('');
 
   useEffect(() => {
-    if (activeRoute === 'wishlist' && user) {
-      apiRequest<{ share: WishlistShare | null }>('/api/wishlist/share')
-        .then((res) => {
-          setWishlistShare(res.share);
-          if (res.share?.title) {
-            setShareTitleInput(res.share.title);
-          } else {
-            const firstName = user.name.split(' ')[0];
-            setShareTitleInput((prev) => prev || `${firstName}'s Curated Wishlist`);
-          }
-        })
-        .catch(() => {
-          setWishlistShare(null);
-        });
-    }
+    if (activeRoute !== 'wishlist' || !user) return;
+    let active = true;
+    apiRequest<{ share: WishlistShare | null }>('/api/wishlist/share')
+      .then((res) => {
+        if (!active) return;
+        setWishlistShare(res.share);
+        if (res.share?.title) {
+          setShareTitleInput(res.share.title);
+        } else {
+          const firstName = user.name.split(' ')[0];
+          setShareTitleInput((prev) => prev || `${firstName}'s Curated Wishlist`);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setWishlistShare(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [activeRoute, user]);
 
   useEffect(() => {
     if (!sharedToken) return;
+    let active = true;
     setSharedLoading(true);
     setSharedError('');
     apiRequest<{
@@ -216,14 +226,23 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       };
       items: Product[];
     }>(`/api/wishlist/public/${encodeURIComponent(sharedToken)}`)
-      .then((res) => setSharedCollection(res))
+      .then((res) => {
+        if (!active) return;
+        setSharedCollection(res);
+      })
       .catch((err) => {
+        if (!active) return;
         setSharedCollection(null);
         setSharedError(
           err instanceof Error ? err.message : 'Shared wishlist collection not found or private.'
         );
       })
-      .finally(() => setSharedLoading(false));
+      .finally(() => {
+        if (active) setSharedLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [sharedToken]);
 
   // Product comparison
@@ -251,34 +270,48 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   }, [externalSelectedProduct, onClearExternalProduct]);
 
   useEffect(() => {
-    if (activeRoute === 'orders' && user) {
-      setMyOrdersLoading(true);
-      setMyOrdersError('');
-      apiRequest<{ orders: Order[] }>('/api/orders/my')
-        .then((res) => setMyOrders(res.orders))
-        .catch((err) =>
-          setMyOrdersError(err instanceof Error ? err.message : 'Unable to load order history')
-        )
-        .finally(() => setMyOrdersLoading(false));
-    }
+    if (activeRoute !== 'orders' || !user) return;
+    let active = true;
+    setMyOrdersLoading(true);
+    setMyOrdersError('');
+    apiRequest<{ orders: Order[] }>('/api/orders/my')
+      .then((res) => {
+        if (active) setMyOrders(res.orders);
+      })
+      .catch((err) => {
+        if (active) setMyOrdersError(err instanceof Error ? err.message : 'Unable to load order history');
+      })
+      .finally(() => {
+        if (active) setMyOrdersLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [activeRoute, user]);
 
   useEffect(() => {
-    if (activeRoute === 'account' && user) {
-      setLoyaltyLoading(true);
-      setLoyaltyError('');
-      apiRequest<{
-        balance: number;
-        dollarValuePerPoint: number;
-        earnRatePerDollar: number;
-        transactions: LoyaltyTransaction[];
-      }>('/api/loyalty')
-        .then((res) => setLoyaltyData(res))
-        .catch((err) =>
-          setLoyaltyError(err instanceof Error ? err.message : 'Unable to load loyalty rewards')
-        )
-        .finally(() => setLoyaltyLoading(false));
-    }
+    if (activeRoute !== 'account' || !user) return;
+    let active = true;
+    setLoyaltyLoading(true);
+    setLoyaltyError('');
+    apiRequest<{
+      balance: number;
+      dollarValuePerPoint: number;
+      earnRatePerDollar: number;
+      transactions: LoyaltyTransaction[];
+    }>('/api/loyalty')
+      .then((res) => {
+        if (active) setLoyaltyData(res);
+      })
+      .catch((err) => {
+        if (active) setLoyaltyError(err instanceof Error ? err.message : 'Unable to load loyalty rewards');
+      })
+      .finally(() => {
+        if (active) setLoyaltyLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [activeRoute, user]);
 
   // Individual product detail page state
@@ -296,6 +329,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
   useEffect(() => {
     if (!detailProduct) return;
+    let active = true;
     setDetailQty(1);
     setDetailLiveRating(detailProduct.rating);
     const parsed = parseAttributes(detailProduct.attributes_json);
@@ -307,23 +341,52 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       `/api/products/${detailProduct.id}`
     )
       .then((res) => {
+        if (!active) return;
         setDetailReviews(res.reviews);
         setDetailCanReview(Boolean(res.canReview));
         if (res.product) setDetailLiveRating(res.product.rating);
       })
       .catch(() => {
+        if (!active) return;
         setDetailReviews([]);
         setDetailCanReview(false);
       });
+
+    return () => {
+      active = false;
+    };
   }, [detailProduct, user?.id]);
 
-  // Auto-fetch live shipping status and ETA when entering the Track Order page
+  const lookupOrder = useCallback(async (orderNumberQuery: string) => {
+    const cleaned = orderNumberQuery.trim();
+    if (!cleaned) return;
+    setTrackingLoading(true);
+    setTrackError('');
+    try {
+      const res = await apiRequest<{ order: Order; items: OrderItem[] }>(
+        `/api/orders/track/${encodeURIComponent(cleaned)}`
+      );
+      setTrackedResult(res);
+      setLastSyncedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (err) {
+      setTrackedResult(null);
+      setTrackError(err instanceof Error ? err.message : 'Order not found');
+    } finally {
+      setTrackingLoading(false);
+    }
+  }, []);
+
+  const trackInitRef = useRef(false);
   useEffect(() => {
-    if (activeRoute === 'track' && !trackedResult && !trackError && !trackingLoading && trackInput.trim()) {
+    if (activeRoute !== 'track') {
+      trackInitRef.current = false;
+      return;
+    }
+    if (!trackInitRef.current && !trackedResult && !trackError && !trackingLoading && trackInput.trim()) {
+      trackInitRef.current = true;
       lookupOrder(trackInput);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRoute]);
+  }, [activeRoute, lookupOrder, trackError, trackInput, trackedResult, trackingLoading]);
 
   // Real-time SSE subscription for the currently tracked order
   const trackedOrderNumber = trackedResult?.order.order_number || '';
@@ -398,25 +461,6 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     if (sortBy === 'price-desc') return [...list].sort((a, b) => b.bundle_price - a.bundle_price);
     return list;
   }, [bundles, effectiveCategorySlug, searchQuery, sortBy]);
-
-  const lookupOrder = async (orderNumberQuery: string) => {
-    const cleaned = orderNumberQuery.trim();
-    if (!cleaned) return;
-    setTrackingLoading(true);
-    setTrackError('');
-    try {
-      const res = await apiRequest<{ order: Order; items: OrderItem[] }>(
-        `/api/orders/track/${encodeURIComponent(cleaned)}`
-      );
-      setTrackedResult(res);
-      setLastSyncedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    } catch (err) {
-      setTrackedResult(null);
-      setTrackError(err instanceof Error ? err.message : 'Order not found');
-    } finally {
-      setTrackingLoading(false);
-    }
-  };
 
   const handleTrackOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1326,7 +1370,17 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
   // Dedicated Photo-to-Video Motion Studio Subview
   if (activeRoute === 'studio') {
-    return <VideoStudioView products={products} onBack={() => onNavigateRoute('catalog')} />;
+    return (
+      <Suspense
+        fallback={
+          <div className="max-w-[1280px] mx-auto px-6 py-10">
+            <div className="h-64 bg-white border border-slate-200 rounded-xl animate-pulse" />
+          </div>
+        }
+      >
+        <VideoStudioView products={products} onBack={() => onNavigateRoute('catalog')} />
+      </Suspense>
+    );
   }
 
   // Dedicated Vendor Bundle Builder Subview
@@ -1356,6 +1410,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     const handleSaveShare = async (opts?: { isPublic?: boolean; regenerate?: boolean }) => {
       setShareSaving(true);
       setShareCopied(false);
+      setShareError('');
       try {
         const res = await apiRequest<{ share: WishlistShare }>('/api/wishlist/share', {
           method: 'POST',
@@ -1367,6 +1422,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         });
         setWishlistShare(res.share);
         setShareTitleInput(res.share.title);
+      } catch (err) {
+        setShareError(err instanceof Error ? err.message : 'Unable to update share link');
       } finally {
         setShareSaving(false);
       }
@@ -1481,6 +1538,12 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                     : 'Generate Share Link'}
               </button>
             </div>
+
+            {shareError && (
+              <div className="p-2.5 bg-red-50 border border-red-200 text-xs text-red-700 rounded-lg">
+                {shareError}
+              </div>
+            )}
 
             {wishlistShare && (
               <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2.5">
@@ -2384,8 +2447,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   Curated Multi-Vendor Flagship · Verified Makers
                 </div>
                 <h1
-                  className="text-3xl sm:text-4xl lg:text-[42px] font-bold text-slate-900 tracking-tight leading-[1.12]"
-                  style={{ textWrap: 'balance' }}
+                  className="text-3xl sm:text-4xl lg:text-[42px] font-bold text-slate-900 tracking-tight leading-[1.12] text-balance"
                 >
                   {sec.title}
                 </h1>

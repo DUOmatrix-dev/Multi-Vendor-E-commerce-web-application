@@ -1644,7 +1644,10 @@ app.patch('/api/vendor/inventory-threshold', requireAuth(['vendor', 'admin']), (
 });
 
 app.put('/api/vendor/profile', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
-  const vendor = getVendorForUser(req.user!.id);
+  let vendor = getVendorForUser(req.user!.id);
+  if (!vendor && req.user!.role === 'admin') {
+    vendor = db.prepare('SELECT * FROM vendors ORDER BY id ASC LIMIT 1').get() as typeof vendor;
+  }
   if (!vendor) {
     res.status(404).json({ error: 'Vendor not found' });
     return;
@@ -1712,7 +1715,7 @@ app.post('/api/vendor/products', requireAuth(['vendor', 'admin']), (req: AuthedR
 app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
   const prodId = Number(req.params.id);
   const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(prodId) as
-    | { vendor_id: number; price: number }
+    | { vendor_id: number; price: number; compare_at_price: number | null }
     | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Product not found' });
@@ -1728,6 +1731,12 @@ app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: Auth
 
   const body = req.body as Record<string, unknown>;
   const nextPrice = body.price !== undefined ? Number(body.price) : null;
+  const nextCompareAtPrice =
+    'compare_at_price' in body
+      ? body.compare_at_price
+        ? Number(body.compare_at_price)
+        : null
+      : existing.compare_at_price;
   db.prepare(`
     UPDATE products SET
       category_id = COALESCE(?, category_id),
@@ -1747,7 +1756,7 @@ app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: Auth
     body.title ? String(body.title).trim() : null,
     body.product_type ? String(body.product_type) : null,
     nextPrice,
-    body.compare_at_price ? Number(body.compare_at_price) : null,
+    nextCompareAtPrice,
     body.stock !== undefined ? Number(body.stock) : null,
     body.image_url ? String(body.image_url) : null,
     body.short_description !== undefined ? String(body.short_description) : null,
@@ -1808,7 +1817,10 @@ app.patch('/api/vendor/orders/:orderId/status', requireAuth(['vendor', 'admin'])
 });
 
 app.post('/api/vendor/payouts', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
-  const vendor = getVendorForUser(req.user!.id);
+  let vendor = getVendorForUser(req.user!.id);
+  if (!vendor && req.user!.role === 'admin') {
+    vendor = db.prepare('SELECT * FROM vendors ORDER BY id ASC LIMIT 1').get() as typeof vendor;
+  }
   if (!vendor) {
     res.status(404).json({ error: 'Vendor not found' });
     return;
@@ -1939,8 +1951,8 @@ app.post('/api/admin/products', requireAuth(['admin']), (req: Request, res: Resp
 
 app.put('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: Response) => {
   const id = Number(req.params.id);
-  const existing = db.prepare('SELECT id, price FROM products WHERE id = ?').get(id) as
-    | { id: number; price: number }
+  const existing = db.prepare('SELECT id, price, compare_at_price FROM products WHERE id = ?').get(id) as
+    | { id: number; price: number; compare_at_price: number | null }
     | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Product not found' });
@@ -1949,6 +1961,12 @@ app.put('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: R
 
   const body = req.body as Record<string, unknown>;
   const nextPrice = body.price !== undefined ? Number(body.price) : null;
+  const nextCompareAtPrice =
+    'compare_at_price' in body
+      ? body.compare_at_price
+        ? Number(body.compare_at_price)
+        : null
+      : existing.compare_at_price;
   db.prepare(`
     UPDATE products SET
       vendor_id = COALESCE(?, vendor_id),
@@ -1971,7 +1989,7 @@ app.put('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: R
     body.title ? String(body.title).trim() : null,
     body.product_type ? String(body.product_type) : null,
     nextPrice,
-    body.compare_at_price ? Number(body.compare_at_price) : null,
+    nextCompareAtPrice,
     body.stock !== undefined ? Number(body.stock) : null,
     body.image_url ? String(body.image_url) : null,
     body.short_description !== undefined ? String(body.short_description) : null,

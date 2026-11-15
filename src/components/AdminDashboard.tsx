@@ -273,25 +273,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleDeleteProduct = async (id: number) => {
-    await apiRequest(`/api/admin/products/${id}`, { method: 'DELETE' });
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest(`/api/admin/products/${id}`, { method: 'DELETE' });
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete product');
+    }
   };
 
   const handleCsvDownload = async (endpoint: string, filename: string) => {
-    const token = getStoredToken();
-    const res = await fetch(endpoint, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: 'include',
-    });
-    const text = await res.text();
-    const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    setError('');
+    try {
+      const token = getStoredToken();
+      const res = await fetch(endpoint, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(msg || `Failed to export ${filename}`);
+      }
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to download CSV export');
+    }
   };
 
   const handleExportSalesReport = () => {
@@ -320,22 +336,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleCsvImport = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiRequest('/api/admin/products/import/csv', {
-      method: 'POST',
-      body: JSON.stringify({ csvText }),
-    });
-    setCsvImportOpen(false);
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest('/api/admin/products/import/csv', {
+        method: 'POST',
+        body: JSON.stringify({ csvText }),
+      });
+      setCsvImportOpen(false);
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to import CSV products');
+    }
   };
 
   const handleOrderStatus = async (orderId: number, status: Order['order_status']) => {
-    await apiRequest(`/api/admin/orders/${orderId}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ order_status: status }),
-    });
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest(`/api/admin/orders/${orderId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ order_status: status }),
+      });
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update order status');
+    }
   };
 
   const handleOrderTags = async (orderId: number, tags: OrderTag[]) => {
@@ -357,33 +383,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleVendorUpdate = async (id: number, updates: { status?: string; commission_rate?: number }) => {
-    await apiRequest(`/api/admin/vendors/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    });
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest(`/api/admin/vendors/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      });
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update vendor');
+    }
   };
 
   const handlePayoutAction = async (id: number, status: string) => {
-    await apiRequest(`/api/admin/payouts/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    });
-    await loadAdminAll();
+    setError('');
+    try {
+      await apiRequest(`/api/admin/payouts/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+      await loadAdminAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update payout status');
+    }
   };
 
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!catName.trim()) return;
-    await apiRequest('/api/admin/categories', {
-      method: 'POST',
-      body: JSON.stringify({ name: catName, description: catDesc }),
-    });
-    setCatName('');
-    setCatDesc('');
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest('/api/admin/categories', {
+        method: 'POST',
+        body: JSON.stringify({ name: catName, description: catDesc }),
+      });
+      setCatName('');
+      setCatDesc('');
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create category');
+    }
   };
 
   const handleDeleteCategory = async (id: number) => {
@@ -399,52 +440,77 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleAddCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!couponCode.trim()) return;
-    await apiRequest('/api/admin/coupons', {
-      method: 'POST',
-      body: JSON.stringify({
-        code: couponCode,
-        type: couponType,
-        value: Number(couponVal),
-        min_spend: Number(couponMin),
-      }),
-    });
-    setCouponCode('');
-    await loadAdminAll();
+    setError('');
+    try {
+      await apiRequest('/api/admin/coupons', {
+        method: 'POST',
+        body: JSON.stringify({
+          code: couponCode,
+          type: couponType,
+          value: Number(couponVal),
+          min_spend: Number(couponMin),
+        }),
+      });
+      setCouponCode('');
+      await loadAdminAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create coupon');
+    }
   };
 
   const handleDeleteCoupon = async (id: number) => {
-    await apiRequest(`/api/admin/coupons/${id}`, { method: 'DELETE' });
-    await loadAdminAll();
+    setError('');
+    try {
+      await apiRequest(`/api/admin/coupons/${id}`, { method: 'DELETE' });
+      await loadAdminAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete coupon');
+    }
   };
 
   const handleAddCmsPage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cmsTitle.trim() || !cmsContent.trim()) return;
-    await apiRequest('/api/admin/cms', {
-      method: 'POST',
-      body: JSON.stringify({ title: cmsTitle, content: cmsContent }),
-    });
-    setCmsTitle('');
-    setCmsContent('');
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest('/api/admin/cms', {
+        method: 'POST',
+        body: JSON.stringify({ title: cmsTitle, content: cmsContent }),
+      });
+      setCmsTitle('');
+      setCmsContent('');
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create CMS page');
+    }
   };
 
   const handleDeleteCmsPage = async (id: number) => {
-    await apiRequest(`/api/admin/cms/${id}`, { method: 'DELETE' });
-    await loadAdminAll();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest(`/api/admin/cms/${id}`, { method: 'DELETE' });
+      await loadAdminAll();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete CMS page');
+    }
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiRequest('/api/admin/settings', {
-      method: 'PUT',
-      body: JSON.stringify(settings),
-    });
-    setSettingsSaved(true);
-    setTimeout(() => setSettingsSaved(false), 2500);
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest('/api/admin/settings', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2500);
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save store settings');
+    }
   };
 
   const navItems: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
@@ -627,8 +693,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         No order sales data available yet.
                       </div>
                     ) : (
-                      <div className="h-64 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                      <div className="h-64 w-full min-w-0">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                           <AreaChart data={dailySeries} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
                             <defs>
                               <linearGradient id="adminRevenueFill" x1="0" y1="0" x2="0" y2="1">
@@ -1485,6 +1551,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {productModalOpen && (
         <ProductFormModal
+          key={editingProduct?.id ?? 'new'}
           isOpen={productModalOpen}
           onClose={() => setProductModalOpen(false)}
           onSave={handleSaveProduct}

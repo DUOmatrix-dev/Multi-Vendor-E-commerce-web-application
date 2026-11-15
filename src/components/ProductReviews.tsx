@@ -105,12 +105,12 @@ export const ProductReviews: React.FC<ProductReviewsProps> = ({
           {ratingBreakdown.map((row) => (
             <div key={row.stars} className="flex items-center gap-2 text-[11px] text-slate-600 tabular-nums">
               <span className="w-6 font-mono text-right">{row.stars}★</span>
-              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-amber-400 rounded-full transition-all"
-                  style={{ width: `${row.percent}%` }}
-                />
-              </div>
+              <progress
+                value={row.percent}
+                max={100}
+                aria-label={`${row.stars} star reviews: ${row.percent}%`}
+                className="flex-1 h-1.5 rounded-full overflow-hidden appearance-none bg-slate-100 [&::-webkit-progress-bar]:bg-slate-100 [&::-webkit-progress-value]:bg-amber-400 [&::-webkit-progress-value]:rounded-full [&::-moz-progress-bar]:bg-amber-400 [&::-moz-progress-bar]:rounded-full"
+              />
               <span className="w-6 font-mono text-slate-400 text-right">{row.count}</span>
             </div>
           ))}

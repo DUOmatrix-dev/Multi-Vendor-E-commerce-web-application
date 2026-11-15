@@ -155,18 +155,28 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
   };
 
   const handleDeleteProduct = async (id: number) => {
-    await apiRequest(`/api/vendor/products/${id}`, { method: 'DELETE' });
-    await loadVendorData();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest(`/api/vendor/products/${id}`, { method: 'DELETE' });
+      await loadVendorData();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete product');
+    }
   };
 
   const handleOrderStatus = async (orderId: number, status: Order['order_status']) => {
-    await apiRequest(`/api/vendor/orders/${orderId}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ order_status: status }),
-    });
-    await loadVendorData();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest(`/api/vendor/orders/${orderId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ order_status: status }),
+      });
+      await loadVendorData();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update order status');
+    }
   };
 
   const handleRequestPayout = async (e: React.FormEvent) => {
@@ -191,14 +201,19 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiRequest('/api/vendor/profile', {
-      method: 'PUT',
-      body: JSON.stringify({ shop_name: shopName, description: shopDesc }),
-    });
-    setProfileSaved(true);
-    setTimeout(() => setProfileSaved(false), 2000);
-    await loadVendorData();
-    onDataMutated();
+    setError('');
+    try {
+      await apiRequest('/api/vendor/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ shop_name: shopName, description: shopDesc }),
+      });
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2000);
+      await loadVendorData();
+      onDataMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update shop profile');
+    }
   };
 
   const handleSaveThreshold = async (nextVal: number) => {
@@ -709,8 +724,8 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
                               No sales recorded yet for this shop.
                             </div>
                           ) : (
-                            <div className="h-72 w-full">
-                              <ResponsiveContainer width="100%" height="100%">
+                            <div className="h-72 w-full min-w-0">
+                              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                 <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
                                   <defs>
                                     <linearGradient id="vendorRevenueFill" x1="0" y1="0" x2="0" y2="1">
@@ -806,8 +821,8 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
                           Add products to track SKU performance.
                         </div>
                       ) : (
-                        <div className="h-64 w-full">
-                          <ResponsiveContainer width="100%" height="100%">
+                        <div className="h-64 w-full min-w-0">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                             <BarChart
                               data={topProducts.map((tp) => ({
                                 ...tp,
@@ -1208,6 +1223,7 @@ export const VendorDashboard: React.FC<VendorDashboardProps> = ({
 
       {productModalOpen && (
         <ProductFormModal
+          key={editingProduct?.id ?? 'new'}
           isOpen={productModalOpen}
           onClose={() => setProductModalOpen(false)}
           onSave={handleSaveProduct}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   GripVertical,
   Plus,
@@ -54,6 +54,10 @@ export const DragDropMenuBuilder: React.FC<DragDropMenuBuilderProps> = ({
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    setItems(normalizeTree(initialItems));
+  }, [initialItems]);
 
   const topLevel = items.filter((i) => !i.parentClientId);
 

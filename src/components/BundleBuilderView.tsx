@@ -230,6 +230,7 @@ export const BundleBuilderView: React.FC<BundleBuilderViewProps> = ({
   };
 
   const handleToggleBundleActive = async (bundle: ProductBundle) => {
+    setFormError('');
     try {
       await apiRequest(`/api/bundles/${bundle.id}`, {
         method: 'PATCH',
@@ -237,18 +238,19 @@ export const BundleBuilderView: React.FC<BundleBuilderViewProps> = ({
       });
       await loadManagedBundles();
       onDataMutated();
-    } catch {
-      // ignore transient error
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Unable to update bundle visibility');
     }
   };
 
   const handleDeleteBundle = async (bundleId: number) => {
+    setFormError('');
     try {
       await apiRequest(`/api/bundles/${bundleId}`, { method: 'DELETE' });
       await loadManagedBundles();
       onDataMutated();
-    } catch {
-      // ignore transient error
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Unable to delete bundle');
     }
   };
 

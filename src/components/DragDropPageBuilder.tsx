@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { GripVertical, Eye, EyeOff, ArrowUp, ArrowDown, Save, Check } from 'lucide-react';
 import { HomepageSection } from '../types';
 import { apiRequest } from '../lib/api';
@@ -17,6 +17,11 @@ export const DragDropPageBuilder: React.FC<DragDropPageBuilderProps> = ({
   const [dragOverId, setDragOverId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    setSections(initialSections);
+  }, [initialSections]);
 
   const handleDrop = (targetId: number) => {
     if (draggedId === null || draggedId === targetId) {
@@ -55,6 +60,7 @@ export const DragDropPageBuilder: React.FC<DragDropPageBuilderProps> = ({
 
   const saveLayout = async () => {
     setSaving(true);
+    setErrorMsg('');
     try {
       const res = await apiRequest<{ sections: HomepageSection[] }>('/api/admin/sections/reorder', {
         method: 'PUT',
@@ -73,6 +79,8 @@ export const DragDropPageBuilder: React.FC<DragDropPageBuilderProps> = ({
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2500);
       onSaved();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to publish homepage layout');
     } finally {
       setSaving(false);
     }
@@ -97,6 +105,12 @@ export const DragDropPageBuilder: React.FC<DragDropPageBuilderProps> = ({
           {saving ? 'Saving Layout...' : savedNotice ? 'Layout Published' : 'Publish Homepage Layout'}
         </button>
       </div>
+
+      {errorMsg && (
+        <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-sm rounded-lg">
+          {errorMsg}
+        </div>
+      )}
 
       <div className="space-y-4">
         {sections.map((sec, index) => (

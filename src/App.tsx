@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Heart, X } from 'lucide-react';
 import {
   AccountNotification,
@@ -17,12 +17,21 @@ import {
 import { apiRequest, setStoredToken } from './lib/api';
 import { TopBar } from './components/TopBar';
 import { StorefrontView } from './components/StorefrontView';
-import { AdminDashboard } from './components/AdminDashboard';
-import { VendorDashboard } from './components/VendorDashboard';
-import { PosTerminal } from './components/PosTerminal';
 import { CartDrawer } from './components/CartDrawer';
 import { AuthModal } from './components/AuthModal';
-import { LiveVoiceDrawer } from './components/LiveVoiceDrawer';
+
+const AdminDashboard = lazy(() =>
+  import('./components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+const VendorDashboard = lazy(() =>
+  import('./components/VendorDashboard').then((m) => ({ default: m.VendorDashboard }))
+);
+const PosTerminal = lazy(() =>
+  import('./components/PosTerminal').then((m) => ({ default: m.PosTerminal }))
+);
+const LiveVoiceDrawer = lazy(() =>
+  import('./components/LiveVoiceDrawer').then((m) => ({ default: m.LiveVoiceDrawer }))
+);
 
 interface BootstrapResponse {
   categories: Category[];
@@ -47,7 +56,6 @@ export default function App() {
   const [currency, setCurrency] = useState<CurrencyCode>('USD');
 
   const [user, setUser] = useState<User | null>(null);
-  const [vendor, setVendor] = useState<Vendor | null>(null);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -115,10 +123,8 @@ export default function App() {
     try {
       const me = await apiRequest<{ user: User | null; vendor: Vendor | null }>('/api/auth/me');
       setUser(me.user);
-      setVendor(me.vendor);
     } catch {
       setUser(null);
-      setVendor(null);
     }
   }, []);
 
@@ -220,7 +226,6 @@ export default function App() {
         });
         setStoredToken(res.token);
         setUser(res.user);
-        setVendor(res.vendor);
       } catch {
         setAuthOpen(true);
         return;
@@ -235,7 +240,6 @@ export default function App() {
         });
         setStoredToken(res.token);
         setUser(res.user);
-        setVendor(res.vendor);
       } catch {
         setAuthOpen(true);
         return;
@@ -374,13 +378,17 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await apiRequest('/api/auth/logout', { method: 'POST' });
-    setStoredToken(null);
-    setUser(null);
-    setVendor(null);
-    setWishlistIds([]);
-    setWishlistItems([]);
-    setWorkspace('storefront');
+    try {
+      await apiRequest('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // ignore logout network errors; still clear local session state
+    } finally {
+      setStoredToken(null);
+      setUser(null);
+      setWishlistIds([]);
+      setWishlistItems([]);
+      setWorkspace('storefront');
+    }
   };
 
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0);
@@ -392,8 +400,6 @@ export default function App() {
     !announcementDismissed &&
     settings.announcement_enabled === '1' &&
     Boolean(settings.announcement_text);
-
-  void vendor;
 
   return (
     <div id="omnimart-app-shell" className="min-h-screen flex flex-col bg-[#F8F9FB] text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
@@ -527,34 +533,43 @@ export default function App() {
             onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
             onOpenVoice={() => setLiveVoiceOpen(true)}
             onDataMutated={handleDataMutated}
-            onAuthSuccess={(u, v) => {
+            onAuthSuccess={(u) => {
               setUser(u);
-              setVendor(v);
             }}
             onOpenAuth={() => setAuthOpen(true)}
             onCurrencyChange={setCurrency}
           />
-        ) : workspace === 'admin' ? (
-          <AdminDashboard
-            currency={currency}
-            onDataMutated={handleDataMutated}
-            onBackToStorefront={() => setWorkspace('storefront')}
-          />
-        ) : workspace === 'vendor' ? (
-          <VendorDashboard
-            currency={currency}
-            onDataMutated={handleDataMutated}
-            onBackToStorefront={() => setWorkspace('storefront')}
-          />
         ) : (
-          <PosTerminal
-            products={products}
-            categories={categories}
-            currency={currency}
-            taxRatePercent={taxRate}
-            onOrderComplete={loadBootstrap}
-            onBackToStorefront={() => setWorkspace('storefront')}
-          />
+          <Suspense
+            fallback={
+              <div className="max-w-[1280px] mx-auto px-6 py-12">
+                <div className="h-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl animate-pulse" />
+              </div>
+            }
+          >
+            {workspace === 'admin' ? (
+              <AdminDashboard
+                currency={currency}
+                onDataMutated={handleDataMutated}
+                onBackToStorefront={() => setWorkspace('storefront')}
+              />
+            ) : workspace === 'vendor' ? (
+              <VendorDashboard
+                currency={currency}
+                onDataMutated={handleDataMutated}
+                onBackToStorefront={() => setWorkspace('storefront')}
+              />
+            ) : (
+              <PosTerminal
+                products={products}
+                categories={categories}
+                currency={currency}
+                taxRatePercent={taxRate}
+                onOrderComplete={loadBootstrap}
+                onBackToStorefront={() => setWorkspace('storefront')}
+              />
+            )}
+          </Suspense>
         )}
       </div>
 
@@ -659,17 +674,20 @@ export default function App() {
         }}
       />
 
-      <LiveVoiceDrawer
-        isOpen={liveVoiceOpen}
-        onClose={() => setLiveVoiceOpen(false)}
-      />
+      {liveVoiceOpen && (
+        <Suspense fallback={null}>
+          <LiveVoiceDrawer
+            isOpen={liveVoiceOpen}
+            onClose={() => setLiveVoiceOpen(false)}
+          />
+        </Suspense>
+      )}
 
       <AuthModal
         isOpen={authOpen}
         onClose={() => setAuthOpen(false)}
-        onSuccess={(u, v) => {
+        onSuccess={(u) => {
           setUser(u);
-          setVendor(v);
           if (u.role === 'admin') setWorkspace('admin');
           else if (u.role === 'vendor') setWorkspace('vendor');
         }}

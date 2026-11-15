@@ -79,10 +79,45 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   }, [user]);
 
+  const subtotal = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+
+  useEffect(() => {
+    if (items.length === 0) {
+      if (step === 'checkout') {
+        setStep('cart');
+      }
+      setAppliedCoupon(null);
+      setCouponError('');
+      setPointsToRedeem(0);
+    }
+  }, [items.length, step]);
+
+  const appliedCouponCode = appliedCoupon?.code || '';
+  useEffect(() => {
+    if (!appliedCouponCode || subtotal <= 0) return;
+    let active = true;
+    apiRequest<{ code: string; discount: number }>('/api/coupons/validate', {
+      method: 'POST',
+      body: JSON.stringify({ code: appliedCouponCode, subtotal }),
+    })
+      .then((res) => {
+        if (!active) return;
+        setAppliedCoupon({ code: res.code, discount: res.discount });
+        setCouponError('');
+      })
+      .catch((err) => {
+        if (!active) return;
+        setAppliedCoupon(null);
+        setCouponError(err instanceof Error ? err.message : 'Coupon no longer applies to current bag total');
+      });
+    return () => {
+      active = false;
+    };
+  }, [appliedCouponCode, subtotal]);
+
   if (!isOpen) return null;
 
   const isGuestCheckout = !user || checkoutMode === 'guest';
-  const subtotal = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
   const couponDiscount = appliedCoupon ? Math.min(subtotal, appliedCoupon.discount) : 0;
   const remainingSubtotal = Math.max(0, subtotal - couponDiscount);
   const availablePoints = user?.loyalty_points || 0;
