@@ -25,8 +25,16 @@ import {
   Printer,
   Layers,
   ArrowLeft,
+  Bell,
+  Share2,
+  Copy,
+  Check,
+  Mail,
+  Globe,
+  Lock,
 } from 'lucide-react';
 import {
+  AccountNotification,
   Category,
   CmsPage,
   CurrencyCode,
@@ -39,6 +47,7 @@ import {
   Review,
   User,
   Vendor,
+  WishlistShare,
 } from '../types';
 import { formatMoney, parseAttributes } from '../lib/currency';
 import { apiRequest } from '../lib/api';
@@ -63,6 +72,8 @@ interface StorefrontViewProps {
   wishlistIds?: number[];
   wishlistItems?: Product[];
   compareIds?: number[];
+  notifications?: AccountNotification[];
+  unreadNotificationsCount?: number;
   storeName?: string;
   supportEmail?: string;
   onClearExternalProduct?: () => void;
@@ -76,6 +87,8 @@ interface StorefrontViewProps {
   onRemoveWishlist?: (productId: number) => void;
   onToggleCompare?: (productId: number) => void;
   onClearCompare?: () => void;
+  onMarkNotificationRead?: (notificationId: number) => void;
+  onMarkAllNotificationsRead?: () => void;
   onOpenVoice?: () => void;
   onDataMutated?: () => void;
   onAuthSuccess?: (user: User, vendor: Vendor | null) => void;
@@ -97,6 +110,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   wishlistIds = [],
   wishlistItems = [],
   compareIds = [],
+  notifications = [],
+  unreadNotificationsCount = 0,
   storeName,
   supportEmail,
   onClearExternalProduct,
@@ -108,6 +123,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   onRemoveWishlist,
   onToggleCompare,
   onClearCompare,
+  onMarkNotificationRead,
+  onMarkAllNotificationsRead,
   onOpenVoice,
   onDataMutated,
   onAuthSuccess,
@@ -143,6 +160,71 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   } | null>(null);
   const [loyaltyLoading, setLoyaltyLoading] = useState(false);
   const [loyaltyError, setLoyaltyError] = useState('');
+
+  // Shareable wishlist collection state
+  const [wishlistShare, setWishlistShare] = useState<WishlistShare | null>(null);
+  const [shareTitleInput, setShareTitleInput] = useState('');
+  const [shareSaving, setShareSaving] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  // Public shared wishlist viewer state
+  const sharedToken = activeRoute.startsWith('shared-wishlist:')
+    ? activeRoute.replace('shared-wishlist:', '')
+    : '';
+  const [sharedCollection, setSharedCollection] = useState<{
+    collection: {
+      share_token: string;
+      title: string;
+      owner_name: string;
+      updated_at: string;
+      item_count: number;
+    };
+    items: Product[];
+  } | null>(null);
+  const [sharedLoading, setSharedLoading] = useState(false);
+  const [sharedError, setSharedError] = useState('');
+
+  useEffect(() => {
+    if (activeRoute === 'wishlist' && user) {
+      apiRequest<{ share: WishlistShare | null }>('/api/wishlist/share')
+        .then((res) => {
+          setWishlistShare(res.share);
+          if (res.share?.title) {
+            setShareTitleInput(res.share.title);
+          } else {
+            const firstName = user.name.split(' ')[0];
+            setShareTitleInput((prev) => prev || `${firstName}'s Curated Wishlist`);
+          }
+        })
+        .catch(() => {
+          setWishlistShare(null);
+        });
+    }
+  }, [activeRoute, user]);
+
+  useEffect(() => {
+    if (!sharedToken) return;
+    setSharedLoading(true);
+    setSharedError('');
+    apiRequest<{
+      collection: {
+        share_token: string;
+        title: string;
+        owner_name: string;
+        updated_at: string;
+        item_count: number;
+      };
+      items: Product[];
+    }>(`/api/wishlist/public/${encodeURIComponent(sharedToken)}`)
+      .then((res) => setSharedCollection(res))
+      .catch((err) => {
+        setSharedCollection(null);
+        setSharedError(
+          err instanceof Error ? err.message : 'Shared wishlist collection not found or private.'
+        );
+      })
+      .finally(() => setSharedLoading(false));
+  }, [sharedToken]);
 
   // Product comparison
   const [highlightDiffs, setHighlightDiffs] = useState(false);
@@ -779,6 +861,127 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </div>
             </div>
 
+            {/* Automated Price-Drop Notifications */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <Bell className="w-4 h-4 text-blue-600" />
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">
+                      Wishlist Price-Drop Alerts
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Automated email and dashboard alerts when saved wishlist items drop in price.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-mono text-slate-500 tabular-nums">
+                    {unreadNotificationsCount} unread · {notifications.length} total
+                  </span>
+                  {unreadNotificationsCount > 0 && onMarkAllNotificationsRead && (
+                    <button
+                      type="button"
+                      onClick={onMarkAllNotificationsRead}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                    >
+                      Mark All Read
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {notifications.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No price-drop alerts yet. Save items to your wishlist to receive automatic alerts whenever a vendor lowers the price.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {notifications.map((notif) => {
+                    const unread = !notif.is_read;
+                    return (
+                      <div
+                        key={notif.id}
+                        className={`px-6 py-4 flex flex-wrap items-center justify-between gap-4 ${
+                          unread ? 'bg-blue-50/40' : 'bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                          <div className="w-14 h-11 rounded-lg bg-slate-100 overflow-hidden shrink-0">
+                            <ResilientImage
+                              src={notif.product_image_url || ''}
+                              alt={notif.title}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-semibold text-slate-900">
+                                {notif.title}
+                              </span>
+                              {unread && (
+                                <span className="text-[11px] font-semibold text-blue-700">
+                                  Unread
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-600">{notif.message}</p>
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 tabular-nums">
+                              {notif.old_price !== null && notif.new_price !== null && (
+                                <span className="font-mono">
+                                  <span className="line-through text-slate-400 mr-1.5">
+                                    {formatMoney(notif.old_price, currency)}
+                                  </span>
+                                  <strong className="text-emerald-700">
+                                    {formatMoney(notif.new_price, currency)}
+                                  </strong>
+                                </span>
+                              )}
+                              {notif.email_dispatched_to && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <Mail className="w-3 h-3 text-slate-400" />
+                                    Email sent to {notif.email_dispatched_to}
+                                  </span>
+                                </>
+                              )}
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono">{notif.created_at.slice(0, 16)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {notif.product_slug && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (unread) onMarkNotificationRead?.(notif.id);
+                                onNavigateRoute(`product:${notif.product_slug}`);
+                              }}
+                              className="px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-blue-600 rounded-lg transition-colors whitespace-nowrap"
+                            >
+                              View Product
+                            </button>
+                          )}
+                          {unread && onMarkNotificationRead && (
+                            <button
+                              type="button"
+                              onClick={() => onMarkNotificationRead(notif.id)}
+                              className="px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 border border-slate-200 bg-white rounded-lg transition-colors whitespace-nowrap"
+                            >
+                              Mark Read
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Points Ledger */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
@@ -1143,8 +1346,43 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     );
   }
 
-  // Dedicated Customer Wishlist Subview
+  // Dedicated Customer Wishlist Subview (with Public Shareable Link)
   if (activeRoute === 'wishlist') {
+    const shareUrl =
+      wishlistShare && typeof window !== 'undefined'
+        ? `${window.location.origin}/?wishlist=${wishlistShare.share_token}`
+        : '';
+
+    const handleSaveShare = async (opts?: { isPublic?: boolean; regenerate?: boolean }) => {
+      setShareSaving(true);
+      setShareCopied(false);
+      try {
+        const res = await apiRequest<{ share: WishlistShare }>('/api/wishlist/share', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: shareTitleInput.trim() || `${user?.name.split(' ')[0] || 'My'}'s Curated Wishlist`,
+            isPublic: opts?.isPublic !== undefined ? opts.isPublic : wishlistShare ? Boolean(wishlistShare.is_public) : true,
+            regenerate: Boolean(opts?.regenerate),
+          }),
+        });
+        setWishlistShare(res.share);
+        setShareTitleInput(res.share.title);
+      } finally {
+        setShareSaving(false);
+      }
+    };
+
+    const handleCopyShareUrl = async () => {
+      if (!shareUrl) return;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareCopied(true);
+        window.setTimeout(() => setShareCopied(false), 2500);
+      } catch {
+        setShareCopied(false);
+      }
+    };
+
     return (
       <div className="max-w-5xl mx-auto px-6 py-10 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
@@ -1157,6 +1395,13 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => onNavigateRoute('account')}
+              className="text-sm font-medium text-slate-600 hover:text-slate-900"
+            >
+              Price Alerts ({unreadNotificationsCount})
+            </button>
             <button
               type="button"
               onClick={() => onNavigateRoute('orders')}
@@ -1174,13 +1419,127 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           </div>
         </div>
 
+        {/* Shareable Collection Link Panel */}
+        {user && (
+          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <Share2 className="w-4 h-4 text-blue-600" />
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">Share Curated Wishlist</h2>
+                  <p className="text-xs text-slate-500">
+                    Generate a public, read-only link so friends or colleagues can browse your saved items.
+                  </p>
+                </div>
+              </div>
+
+              {wishlistShare && (
+                <button
+                  type="button"
+                  disabled={shareSaving}
+                  onClick={() => handleSaveShare({ isPublic: !wishlistShare.is_public })}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                    wishlistShare.is_public
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-600'
+                  }`}
+                >
+                  {wishlistShare.is_public ? (
+                    <>
+                      <Globe className="w-3.5 h-3.5" />
+                      Public Link Active
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-3.5 h-3.5" />
+                      Private (Paused)
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5">
+              <input
+                type="text"
+                value={shareTitleInput}
+                onChange={(e) => setShareTitleInput(e.target.value)}
+                placeholder="Collection title (e.g. Studio Desk Setup)"
+                aria-label="Wishlist collection title"
+                className="flex-1 min-w-[200px] px-3.5 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600"
+              />
+              <button
+                type="button"
+                disabled={shareSaving}
+                onClick={() => handleSaveShare({ isPublic: true })}
+                className="px-4 py-2 bg-slate-900 hover:bg-blue-600 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+              >
+                {shareSaving
+                  ? 'Saving...'
+                  : wishlistShare
+                    ? 'Update Share Link'
+                    : 'Generate Share Link'}
+              </button>
+            </div>
+
+            {wishlistShare && (
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2.5">
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  aria-label="Shareable wishlist link"
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="flex-1 min-w-[220px] px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-700"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyShareUrl}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+                >
+                  {shareCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy Link
+                    </>
+                  )}
+                </button>
+                {Boolean(wishlistShare.is_public) && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateRoute(`shared-wishlist:${wishlistShare.share_token}`)}
+                    className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    Preview Public Page
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={shareSaving}
+                  onClick={() => handleSaveShare({ regenerate: true })}
+                  title="Generate a brand-new link token"
+                  className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium text-slate-500 hover:text-slate-900 border border-slate-200 rounded-lg whitespace-nowrap"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Regenerate
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {!user ? (
           <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-4">
             <Heart className="w-8 h-8 text-slate-400 mx-auto" />
             <div className="space-y-1">
               <h2 className="text-lg font-semibold text-slate-900">Sign in to manage your wishlist</h2>
               <p className="text-sm text-slate-500 max-w-md mx-auto">
-                Sign in with your customer account (or use the Customer Demo button) to save products across sessions.
+                Sign in with your customer account (or use the Customer Demo button) to save products across sessions and share curated links.
               </p>
             </div>
             <button
@@ -1305,6 +1664,190 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           onClose={() => setActiveProduct(null)}
           onAddToCart={onAddToCart}
         />
+      </div>
+    );
+  }
+
+  // Public Shared Wishlist Collection Subview
+  if (activeRoute.startsWith('shared-wishlist:')) {
+    const collectionTotal = sharedCollection
+      ? sharedCollection.items.reduce((sum, it) => sum + it.price, 0)
+      : 0;
+
+    return (
+      <div className="max-w-5xl mx-auto px-6 py-10 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
+          <div>
+            <div className="text-xs font-medium text-slate-500">
+              Public Curated Collection
+              {sharedCollection ? ` · Curated by ${sharedCollection.collection.owner_name}` : ''}
+            </div>
+            <h1 className="text-2xl font-bold text-slate-900 mt-1">
+              {sharedCollection ? sharedCollection.collection.title : 'Shared Wishlist'}
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {user && (
+              <button
+                type="button"
+                onClick={() => onNavigateRoute('wishlist')}
+                className="text-sm font-medium text-slate-600 hover:text-slate-900"
+              >
+                My Wishlist
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onNavigateRoute('catalog')}
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Back to Shop
+            </button>
+          </div>
+        </div>
+
+        {sharedLoading ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500">
+            Loading curated wishlist collection...
+          </div>
+        ) : sharedError || !sharedCollection ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-3">
+            <Lock className="w-8 h-8 text-slate-400 mx-auto" />
+            <div className="text-base font-semibold text-slate-900">Collection Unavailable</div>
+            <p className="text-sm text-slate-500 max-w-md mx-auto">
+              {sharedError || 'This shared wishlist link is private or does not exist.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => onNavigateRoute('catalog')}
+              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg"
+            >
+              Browse OmniMart Catalog
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-600">
+              <div className="flex flex-wrap items-center gap-3">
+                <span>
+                  <strong className="text-slate-900 font-semibold">{sharedCollection.items.length}</strong>{' '}
+                  curated {sharedCollection.items.length === 1 ? 'item' : 'items'}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">
+                  Combined value:{' '}
+                  <strong className="font-mono text-slate-900">
+                    {formatMoney(collectionTotal, currency)}
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums">
+                  Updated {sharedCollection.collection.updated_at.slice(0, 10)}
+                </span>
+              </div>
+              {sharedCollection.items.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const available = sharedCollection.items
+                      .filter((p) => p.product_type !== 'physical' || p.stock > 0)
+                      .map((p) => {
+                        const firstOpt = parseAttributes(p.attributes_json)[0]?.options?.[0];
+                        return {
+                          product: p,
+                          variantLabel: firstOpt?.label || '',
+                          unitPrice: p.price + (firstOpt?.priceDelta || 0),
+                          quantity: 1,
+                        };
+                      });
+                    if (available.length > 0) onReorderItems(available);
+                  }}
+                  className="px-4 py-2 bg-slate-900 hover:bg-blue-600 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+                >
+                  Add All Available to Bag
+                </button>
+              )}
+            </div>
+
+            {sharedCollection.items.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-sm text-slate-500">
+                This collection currently has no saved items.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {sharedCollection.items.map((item) => {
+                  const outOfStock = item.product_type === 'physical' && item.stock <= 0;
+                  const isSaved = wishlistIds.includes(item.id);
+                  return (
+                    <article
+                      key={item.id}
+                      className="group bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col"
+                    >
+                      <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => onNavigateRoute(`product:${item.slug}`)}
+                          className="w-full h-full block text-left"
+                        >
+                          <ResilientImage
+                            src={item.image_url}
+                            alt={item.title}
+                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                          />
+                        </button>
+                        {onToggleWishlist && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleWishlist(item.id)}
+                            aria-label={isSaved ? 'Remove from my wishlist' : 'Save to my wishlist'}
+                            className="absolute top-3 right-3 p-2 rounded-full bg-white/95 border border-slate-200 text-slate-500 hover:text-rose-500 transition-colors shadow-xs"
+                          >
+                            <Heart className={`w-4 h-4 ${isSaved ? 'fill-rose-500 text-rose-500' : ''}`} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="p-5 flex-1 flex flex-col justify-between gap-4">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate">
+                            <span>{item.category_name}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>{item.vendor_name}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onNavigateRoute(`product:${item.slug}`)}
+                            className="text-left block"
+                          >
+                            <h3 className="text-base font-semibold text-slate-900 group-hover:text-blue-600 transition-colors line-clamp-1">
+                              {item.title}
+                            </h3>
+                          </button>
+                          <p className="text-xs text-slate-500 line-clamp-2">{item.short_description}</p>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                          <span className="text-[15px] font-semibold font-mono text-slate-900 tabular-nums">
+                            {formatMoney(item.price, currency)}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={outOfStock}
+                            onClick={() => quickAdd(item)}
+                            className="px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-blue-600 rounded-lg transition-colors whitespace-nowrap disabled:opacity-40"
+                          >
+                            {outOfStock ? 'Sold Out' : 'Add to Bag'}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }

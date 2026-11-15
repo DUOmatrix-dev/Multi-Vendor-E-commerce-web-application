@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { WebSocketServer } from 'ws';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
@@ -1267,7 +1268,7 @@ function getUserWishlistPayload(userId: number) {
   const items = db.prepare(`
     SELECT p.*, c.name as category_name, c.slug as category_slug,
            v.shop_name as vendor_name, v.slug as vendor_slug,
-           w.created_at as saved_at
+           w.created_at as saved_at, w.saved_price
     FROM wishlist_items w
     JOIN products p ON w.product_id = p.id
     JOIN categories c ON p.category_id = c.id
@@ -1282,6 +1283,63 @@ function getUserWishlistPayload(userId: number) {
   };
 }
 
+function getUserNotificationsPayload(userId: number) {
+  const notifications = db.prepare(`
+    SELECT n.*, p.slug as product_slug, p.image_url as product_image_url, p.price as current_price
+    FROM notifications n
+    LEFT JOIN products p ON n.product_id = p.id
+    WHERE n.user_id = ?
+    ORDER BY n.created_at DESC, n.id DESC
+    LIMIT 50
+  `).all(userId) as Array<{ is_read: number }>;
+
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
+  return { notifications, unreadCount };
+}
+
+function dispatchWishlistPriceDropNotifications(
+  productId: number,
+  oldPrice: number,
+  newPrice: number
+): number {
+  if (!Number.isFinite(oldPrice) || !Number.isFinite(newPrice) || newPrice <= 0 || newPrice >= oldPrice) {
+    return 0;
+  }
+  const product = db.prepare('SELECT id, title FROM products WHERE id = ?').get(productId) as
+    | { id: number; title: string }
+    | undefined;
+  if (!product) return 0;
+
+  const watchers = db.prepare(`
+    SELECT w.user_id, u.email, u.name
+    FROM wishlist_items w
+    JOIN users u ON u.id = w.user_id
+    WHERE w.product_id = ?
+  `).all(productId) as Array<{ user_id: number; email: string; name: string }>;
+
+  if (watchers.length === 0) return 0;
+
+  const pct = Math.max(1, Math.round(((oldPrice - newPrice) / oldPrice) * 100));
+  const insertNotif = db.prepare(`
+    INSERT INTO notifications (
+      user_id, product_id, type, title, message, old_price, new_price, email_dispatched_to, is_read
+    ) VALUES (?, ?, 'price_drop', ?, ?, ?, ?, ?, 0)
+  `);
+
+  for (const watcher of watchers) {
+    insertNotif.run(
+      watcher.user_id,
+      product.id,
+      `Price Drop: ${product.title}`,
+      `${product.title} on your wishlist dropped from $${oldPrice.toFixed(2)} to $${newPrice.toFixed(2)} (${pct}% off).`,
+      Number(oldPrice.toFixed(2)),
+      Number(newPrice.toFixed(2)),
+      watcher.email
+    );
+  }
+  return watchers.length;
+}
+
 app.get('/api/wishlist', requireAuth(), (req: AuthedRequest, res: Response) => {
   res.json(getUserWishlistPayload(req.user!.id));
 });
@@ -1294,7 +1352,9 @@ app.post('/api/wishlist/toggle', requireAuth(), (req: AuthedRequest, res: Respon
     return;
   }
 
-  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(pid);
+  const product = db.prepare('SELECT id, price FROM products WHERE id = ?').get(pid) as
+    | { id: number; price: number }
+    | undefined;
   if (!product) {
     res.status(404).json({ error: 'Product not found' });
     return;
@@ -1309,7 +1369,11 @@ app.post('/api/wishlist/toggle', requireAuth(), (req: AuthedRequest, res: Respon
     db.prepare('DELETE FROM wishlist_items WHERE id = ?').run(existing.id);
     saved = false;
   } else {
-    db.prepare('INSERT INTO wishlist_items (user_id, product_id) VALUES (?, ?)').run(req.user!.id, pid);
+    db.prepare('INSERT INTO wishlist_items (user_id, product_id, saved_price) VALUES (?, ?, ?)').run(
+      req.user!.id,
+      pid,
+      product.price
+    );
     saved = true;
   }
 
@@ -1320,6 +1384,102 @@ app.delete('/api/wishlist/:productId', requireAuth(), (req: AuthedRequest, res: 
   const pid = Number(req.params.productId);
   db.prepare('DELETE FROM wishlist_items WHERE user_id = ? AND product_id = ?').run(req.user!.id, pid);
   res.json(getUserWishlistPayload(req.user!.id));
+});
+
+// Shareable public wishlist collection endpoints
+app.get('/api/wishlist/share', requireAuth(), (req: AuthedRequest, res: Response) => {
+  const share = db.prepare('SELECT * FROM wishlist_shares WHERE user_id = ?').get(req.user!.id) || null;
+  res.json({ share });
+});
+
+app.post('/api/wishlist/share', requireAuth(), (req: AuthedRequest, res: Response) => {
+  const { title, isPublic, regenerate } = req.body as {
+    title?: string;
+    isPublic?: boolean;
+    regenerate?: boolean;
+  };
+  const existing = db.prepare('SELECT * FROM wishlist_shares WHERE user_id = ?').get(req.user!.id) as
+    | { id: number; share_token: string; title: string; is_public: number }
+    | undefined;
+
+  const userRow = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user!.id) as
+    | { name: string }
+    | undefined;
+  const firstName = (userRow?.name || 'Member').split(' ')[0];
+  const defaultTitle = `${firstName}'s Curated Wishlist`;
+  const nextTitle = (title !== undefined ? String(title) : existing?.title || defaultTitle).trim() || defaultTitle;
+  const nextPublic = isPublic !== undefined ? (isPublic ? 1 : 0) : (existing ? existing.is_public : 1);
+
+  const mintToken = () => `${slugify(firstName) || 'list'}-${crypto.randomBytes(4).toString('hex')}`;
+
+  if (existing) {
+    const nextToken = regenerate ? mintToken() : existing.share_token;
+    db.prepare(`
+      UPDATE wishlist_shares
+      SET share_token = ?, title = ?, is_public = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(nextToken, nextTitle, nextPublic, existing.id);
+  } else {
+    db.prepare(`
+      INSERT INTO wishlist_shares (user_id, share_token, title, is_public, updated_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(req.user!.id, mintToken(), nextTitle, nextPublic);
+  }
+
+  const share = db.prepare('SELECT * FROM wishlist_shares WHERE user_id = ?').get(req.user!.id);
+  res.json({ share });
+});
+
+app.get('/api/wishlist/public/:token', (req: Request, res: Response) => {
+  const token = String(req.params.token || '').trim();
+  const share = db.prepare(`
+    SELECT ws.share_token, ws.title, ws.is_public, ws.updated_at, ws.user_id, u.name as owner_name
+    FROM wishlist_shares ws
+    JOIN users u ON u.id = ws.user_id
+    WHERE ws.share_token = ? AND ws.is_public = 1
+  `).get(token) as
+    | {
+        share_token: string;
+        title: string;
+        is_public: number;
+        updated_at: string;
+        user_id: number;
+        owner_name: string;
+      }
+    | undefined;
+
+  if (!share) {
+    res.status(404).json({ error: 'Shared wishlist collection not found or is set to private.' });
+    return;
+  }
+
+  const { items } = getUserWishlistPayload(share.user_id);
+  res.json({
+    collection: {
+      share_token: share.share_token,
+      title: share.title,
+      owner_name: share.owner_name,
+      updated_at: share.updated_at,
+      item_count: items.length,
+    },
+    items,
+  });
+});
+
+// Account Notification Inbox & Read State
+app.get('/api/notifications', requireAuth(), (req: AuthedRequest, res: Response) => {
+  res.json(getUserNotificationsPayload(req.user!.id));
+});
+
+app.patch('/api/notifications/:id/read', requireAuth(), (req: AuthedRequest, res: Response) => {
+  const nid = Number(req.params.id);
+  db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(nid, req.user!.id);
+  res.json(getUserNotificationsPayload(req.user!.id));
+});
+
+app.post('/api/notifications/read-all', requireAuth(), (req: AuthedRequest, res: Response) => {
+  db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(req.user!.id);
+  res.json(getUserNotificationsPayload(req.user!.id));
 });
 
 // ==========================================
@@ -1488,7 +1648,9 @@ app.post('/api/vendor/products', requireAuth(['vendor', 'admin']), (req: AuthedR
 
 app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
   const prodId = Number(req.params.id);
-  const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(prodId) as { vendor_id: number } | undefined;
+  const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(prodId) as
+    | { vendor_id: number; price: number }
+    | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Product not found' });
     return;
@@ -1502,6 +1664,7 @@ app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: Auth
   }
 
   const body = req.body as Record<string, unknown>;
+  const nextPrice = body.price !== undefined ? Number(body.price) : null;
   db.prepare(`
     UPDATE products SET
       category_id = COALESCE(?, category_id),
@@ -1520,7 +1683,7 @@ app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: Auth
     body.category_id ? Number(body.category_id) : null,
     body.title ? String(body.title).trim() : null,
     body.product_type ? String(body.product_type) : null,
-    body.price !== undefined ? Number(body.price) : null,
+    nextPrice,
     body.compare_at_price ? Number(body.compare_at_price) : null,
     body.stock !== undefined ? Number(body.stock) : null,
     body.image_url ? String(body.image_url) : null,
@@ -1531,7 +1694,15 @@ app.put('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: Auth
     prodId
   );
 
-  res.json({ product: db.prepare('SELECT * FROM products WHERE id = ?').get(prodId) });
+  let priceDropAlertsSent = 0;
+  if (nextPrice !== null && nextPrice < existing.price) {
+    priceDropAlertsSent = dispatchWishlistPriceDropNotifications(prodId, existing.price, nextPrice);
+  }
+
+  res.json({
+    product: db.prepare('SELECT * FROM products WHERE id = ?').get(prodId),
+    priceDropAlertsSent,
+  });
 });
 
 app.delete('/api/vendor/products/:id', requireAuth(['vendor', 'admin']), (req: AuthedRequest, res: Response) => {
@@ -1705,7 +1876,16 @@ app.post('/api/admin/products', requireAuth(['admin']), (req: Request, res: Resp
 
 app.put('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: Response) => {
   const id = Number(req.params.id);
+  const existing = db.prepare('SELECT id, price FROM products WHERE id = ?').get(id) as
+    | { id: number; price: number }
+    | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+
   const body = req.body as Record<string, unknown>;
+  const nextPrice = body.price !== undefined ? Number(body.price) : null;
   db.prepare(`
     UPDATE products SET
       vendor_id = COALESCE(?, vendor_id),
@@ -1727,7 +1907,7 @@ app.put('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: R
     body.category_id ? Number(body.category_id) : null,
     body.title ? String(body.title).trim() : null,
     body.product_type ? String(body.product_type) : null,
-    body.price !== undefined ? Number(body.price) : null,
+    nextPrice,
     body.compare_at_price ? Number(body.compare_at_price) : null,
     body.stock !== undefined ? Number(body.stock) : null,
     body.image_url ? String(body.image_url) : null,
@@ -1738,7 +1918,16 @@ app.put('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: R
     body.status ? String(body.status) : null,
     id
   );
-  res.json({ product: db.prepare('SELECT * FROM products WHERE id = ?').get(id) });
+
+  let priceDropAlertsSent = 0;
+  if (nextPrice !== null && nextPrice < existing.price) {
+    priceDropAlertsSent = dispatchWishlistPriceDropNotifications(id, existing.price, nextPrice);
+  }
+
+  res.json({
+    product: db.prepare('SELECT * FROM products WHERE id = ?').get(id),
+    priceDropAlertsSent,
+  });
 });
 
 app.delete('/api/admin/products/:id', requireAuth(['admin']), (req: Request, res: Response) => {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Heart, X } from 'lucide-react';
 import {
+  AccountNotification,
   AppWorkspace,
   CartItem,
   Category,
@@ -34,9 +35,15 @@ interface BootstrapResponse {
   settings: Record<string, string>;
 }
 
+function getInitialWishlistRoute(): string {
+  if (typeof window === 'undefined') return 'catalog';
+  const token = new URLSearchParams(window.location.search).get('wishlist')?.trim();
+  return token ? `shared-wishlist:${token}` : 'catalog';
+}
+
 export default function App() {
   const [workspace, setWorkspace] = useState<AppWorkspace>('storefront');
-  const [route, setRoute] = useState<string>('catalog');
+  const [route, setRouteState] = useState<string>(getInitialWishlistRoute);
   const [currency, setCurrency] = useState<CurrencyCode>('USD');
 
   const [user, setUser] = useState<User | null>(null);
@@ -59,6 +66,8 @@ export default function App() {
   const [searchSelectedProduct, setSearchSelectedProduct] = useState<Product | null>(null);
   const [wishlistIds, setWishlistIds] = useState<number[]>([]);
   const [wishlistItems, setWishlistItems] = useState<Product[]>([]);
+  const [notifications, setNotifications] = useState<AccountNotification[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [liveVoiceOpen, setLiveVoiceOpen] = useState(false);
   const [wishlistToast, setWishlistToast] = useState<{
@@ -124,6 +133,58 @@ export default function App() {
     }
   }, []);
 
+  const setRoute = useCallback((nextRoute: string) => {
+    setRouteState(nextRoute);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (nextRoute.startsWith('shared-wishlist:')) {
+        url.searchParams.set('wishlist', nextRoute.replace('shared-wishlist:', ''));
+      } else {
+        url.searchParams.delete('wishlist');
+      }
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const res = await apiRequest<{ notifications: AccountNotification[]; unreadCount: number }>(
+        '/api/notifications'
+      );
+      setNotifications(res.notifications);
+      setUnreadNotificationsCount(res.unreadCount);
+    } catch {
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
+    }
+  }, []);
+
+  const handleMarkNotificationRead = useCallback(async (notificationId: number) => {
+    try {
+      const res = await apiRequest<{ notifications: AccountNotification[]; unreadCount: number }>(
+        `/api/notifications/${notificationId}/read`,
+        { method: 'PATCH' }
+      );
+      setNotifications(res.notifications);
+      setUnreadNotificationsCount(res.unreadCount);
+    } catch {
+      // ignore transient error
+    }
+  }, []);
+
+  const handleMarkAllNotificationsRead = useCallback(async () => {
+    try {
+      const res = await apiRequest<{ notifications: AccountNotification[]; unreadCount: number }>(
+        '/api/notifications/read-all',
+        { method: 'POST' }
+      );
+      setNotifications(res.notifications);
+      setUnreadNotificationsCount(res.unreadCount);
+    } catch {
+      // ignore transient error
+    }
+  }, []);
+
   useEffect(() => {
     loadBootstrap();
     loadSession();
@@ -132,11 +193,22 @@ export default function App() {
   useEffect(() => {
     if (user) {
       loadWishlist();
+      loadNotifications();
     } else {
       setWishlistIds([]);
       setWishlistItems([]);
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
     }
-  }, [user, loadWishlist]);
+  }, [user, loadWishlist, loadNotifications]);
+
+  const handleDataMutated = useCallback(() => {
+    loadBootstrap();
+    if (user) {
+      loadWishlist();
+      loadNotifications();
+    }
+  }, [loadBootstrap, loadNotifications, loadWishlist, user]);
 
   const handleSelectWorkspace = async (target: AppWorkspace) => {
     if (target === 'admin' && user?.role !== 'admin') {
@@ -349,6 +421,7 @@ export default function App() {
         cartCount={cartCount}
         wishlistCount={wishlistIds.length}
         compareCount={compareIds.length}
+        unreadNotificationsCount={unreadNotificationsCount}
         user={user}
         workspace={workspace}
         onSelectWorkspace={handleSelectWorkspace}
@@ -437,6 +510,8 @@ export default function App() {
             wishlistIds={wishlistIds}
             wishlistItems={wishlistItems}
             compareIds={compareIds}
+            notifications={notifications}
+            unreadNotificationsCount={unreadNotificationsCount}
             storeName={settings.store_name || 'OmniMart'}
             supportEmail={settings.support_email || 'support@omnimart.com'}
             onClearExternalProduct={() => setSearchSelectedProduct(null)}
@@ -448,8 +523,10 @@ export default function App() {
             onRemoveWishlist={handleRemoveWishlist}
             onToggleCompare={handleToggleCompare}
             onClearCompare={() => setCompareIds([])}
+            onMarkNotificationRead={handleMarkNotificationRead}
+            onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
             onOpenVoice={() => setLiveVoiceOpen(true)}
-            onDataMutated={loadBootstrap}
+            onDataMutated={handleDataMutated}
             onAuthSuccess={(u, v) => {
               setUser(u);
               setVendor(v);
@@ -460,13 +537,13 @@ export default function App() {
         ) : workspace === 'admin' ? (
           <AdminDashboard
             currency={currency}
-            onDataMutated={loadBootstrap}
+            onDataMutated={handleDataMutated}
             onBackToStorefront={() => setWorkspace('storefront')}
           />
         ) : workspace === 'vendor' ? (
           <VendorDashboard
             currency={currency}
-            onDataMutated={loadBootstrap}
+            onDataMutated={handleDataMutated}
             onBackToStorefront={() => setWorkspace('storefront')}
           />
         ) : (

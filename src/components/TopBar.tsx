@@ -30,6 +30,7 @@ interface TopBarProps {
   cartCount: number;
   wishlistCount: number;
   compareCount: number;
+  unreadNotificationsCount?: number;
   user: User | null;
   workspace: AppWorkspace;
   onSelectWorkspace: (ws: AppWorkspace) => void;
@@ -50,6 +51,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   cartCount,
   wishlistCount,
   compareCount,
+  unreadNotificationsCount = 0,
   user,
   workspace,
   onSelectWorkspace,
@@ -335,6 +337,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       </span>
                       {user && (
                         <span className="text-xs font-mono text-blue-600 dark:text-blue-400 tabular-nums">
+                          {unreadNotificationsCount > 0 ? `${unreadNotificationsCount} alert · ` : ''}
                           {(user.loyalty_points ?? 0).toLocaleString()} pts
                         </span>
                       )}

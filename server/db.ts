@@ -240,6 +240,33 @@ export function initDatabase() {
       FOREIGN KEY (bundle_id) REFERENCES bundles(id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      product_id INTEGER,
+      type TEXT NOT NULL DEFAULT 'price_drop',
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      old_price REAL,
+      new_price REAL,
+      email_dispatched_to TEXT DEFAULT '',
+      is_read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS wishlist_shares (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      share_token TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL DEFAULT 'Curated Collection',
+      is_public INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 
   // Safe schema migration for existing SQLite databases
@@ -281,6 +308,12 @@ export function initDatabase() {
   const orderItemColNames = new Set(orderItemCols.map((c) => c.name));
   if (!orderItemColNames.has('bundle_id')) {
     db.exec(`ALTER TABLE order_items ADD COLUMN bundle_id INTEGER DEFAULT NULL`);
+  }
+
+  const wishlistCols = db.prepare(`PRAGMA table_info(wishlist_items)`).all() as Array<{ name: string }>;
+  const wishlistColNames = new Set(wishlistCols.map((c) => c.name));
+  if (!wishlistColNames.has('saved_price')) {
+    db.exec(`ALTER TABLE wishlist_items ADD COLUMN saved_price REAL DEFAULT NULL`);
   }
 
   const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number };
@@ -392,6 +425,44 @@ export function initDatabase() {
       ).lastInsertRowid;
       insertBundleItem.run(b2, prodEspresso.id, 1);
       insertBundleItem.run(b2, prodLamp.id, 1);
+    }
+  }
+
+  // Seed a sample wishlist price-drop notification for demo customer if notifications table is empty
+  const notifCount = db.prepare('SELECT COUNT(*) as cnt FROM notifications').get() as { cnt: number };
+  if (notifCount.cnt === 0) {
+    const demoCust = db.prepare("SELECT id, email FROM users WHERE email = 'customer@omnimart.com'").get() as
+      | { id: number; email: string }
+      | undefined;
+    const discountedProd = db.prepare(
+      "SELECT id, title, price, compare_at_price FROM products WHERE compare_at_price IS NOT NULL AND compare_at_price > price ORDER BY id ASC LIMIT 1"
+    ).get() as { id: number; title: string; price: number; compare_at_price: number } | undefined;
+
+    if (demoCust && discountedProd) {
+      const existingWishCount = db.prepare('SELECT COUNT(*) as cnt FROM wishlist_items WHERE user_id = ?').get(demoCust.id) as {
+        cnt: number;
+      };
+      if (existingWishCount.cnt === 0) {
+        db.prepare(
+          'INSERT OR IGNORE INTO wishlist_items (user_id, product_id, saved_price) VALUES (?, ?, ?)'
+        ).run(demoCust.id, discountedProd.id, discountedProd.compare_at_price);
+      }
+      const pct = Math.max(
+        1,
+        Math.round(((discountedProd.compare_at_price - discountedProd.price) / discountedProd.compare_at_price) * 100)
+      );
+      db.prepare(`
+        INSERT INTO notifications (user_id, product_id, type, title, message, old_price, new_price, email_dispatched_to, is_read)
+        VALUES (?, ?, 'price_drop', ?, ?, ?, ?, ?, 0)
+      `).run(
+        demoCust.id,
+        discountedProd.id,
+        `Price Drop: ${discountedProd.title}`,
+        `${discountedProd.title} on your wishlist dropped from $${discountedProd.compare_at_price.toFixed(2)} to $${discountedProd.price.toFixed(2)} (${pct}% off).`,
+        discountedProd.compare_at_price,
+        discountedProd.price,
+        demoCust.email
+      );
     }
   }
 }

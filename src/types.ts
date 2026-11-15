@@ -251,6 +251,33 @@ export interface LoyaltyTransaction {
   created_at: string;
 }
 
+export interface AccountNotification {
+  id: number;
+  user_id: number;
+  product_id: number | null;
+  type: 'price_drop' | 'system';
+  title: string;
+  message: string;
+  old_price: number | null;
+  new_price: number | null;
+  email_dispatched_to: string;
+  is_read: number;
+  created_at: string;
+  product_slug?: string;
+  product_image_url?: string;
+  current_price?: number;
+}
+
+export interface WishlistShare {
+  id: number;
+  user_id: number;
+  share_token: string;
+  title: string;
+  is_public: number;
+  updated_at: string;
+  created_at: string;
+}
+
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP';
 
 export type AppWorkspace = 'storefront' | 'admin' | 'vendor' | 'pos';
